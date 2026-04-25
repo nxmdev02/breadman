@@ -1,18 +1,40 @@
 <script setup lang="ts">
 import type { BookEntry, ReadingStatus } from '~/types/book'
 import type { BudgetEntry, BudgetKind } from '~/types/finance'
+import type { SyncPhase } from '~/types/firebase'
 
-const { readingHistory, saveBook, updateStatus } = useReadingArchive()
-const { budgetEntries, saveEntry } = useBudgetArchive()
+const { readingHistory, saveBook, updateStatus, deleteBook } = useReadingArchive()
+const { budgetEntries, currentBalance, saveEntry, deleteEntry } = useBudgetArchive()
+const { user, authReady, authPending, authError, loginWithGoogle, logout } = useFirebaseSession()
+const {
+  isCloudConfigured,
+  isAuthenticated,
+  readingSyncState,
+  budgetSyncState,
+  financeSyncState,
+  readingSyncError,
+  budgetSyncError,
+  financeSyncError,
+  fetchReadingSnapshot,
+  saveReadingSnapshot,
+  fetchBudgetSnapshot,
+  saveBudgetSnapshot,
+  fetchFinanceSummary,
+  saveFinanceSummary
+} = useArchiveCloud()
 
 const activeTab = ref<'reading' | 'budget'>('reading')
 const query = ref('')
 const selectedStatus = ref<'all' | 'finished' | 'reading' | 'paused'>('all')
 const editingId = ref<number | null>(null)
+const readingModalOpen = ref(false)
 const budgetQuery = ref('')
 const budgetKindFilter = ref<'all' | BudgetKind>('all')
 const budgetEditingId = ref<number | null>(null)
+const budgetModalOpen = ref(false)
+const financeModalOpen = ref(false)
 const currency = new Intl.NumberFormat('ko-KR')
+const balanceInput = ref('0')
 
 const latestBudgetDate = computed(() => {
   const sorted = [...budgetEntries.value].sort((a, b) => b.spentAt.localeCompare(a.spentAt))
@@ -23,7 +45,7 @@ const budgetReferenceYear = ref(Number(latestBudgetDate.value.slice(0, 4)))
 const budgetReferenceMonth = ref(Number(latestBudgetDate.value.slice(5, 7)))
 
 const emptyForm = () => ({
-  genre: '',
+  genre: '소설',
   title: '',
   author: '',
   startedAt: '',
@@ -34,18 +56,47 @@ const emptyForm = () => ({
 })
 
 const form = reactive(emptyForm())
+const readingGenres = ['소설', '에세이', '인문', '경제경영', '자기계발', '역사', '과학', '철학', '예술', '고전', '기타']
 
 const emptyBudgetForm = () => ({
-  title: '',
-  category: '',
+  title: '식비',
+  category: '생활비',
   amount: '',
   spentAt: '',
-  paymentMethod: '',
+  paymentMethod: '카드',
   memo: '',
   kind: 'expense' as BudgetKind
 })
 
 const budgetForm = reactive(emptyBudgetForm())
+const readingErrors = reactive({
+  title: '',
+  startedAt: '',
+  finishedAt: ''
+})
+const budgetErrors = reactive({
+  title: '',
+  category: '',
+  amount: '',
+  spentAt: ''
+})
+const expenseTitleOptions = ['식비', '카페', '교통비', '주거비', '쇼핑', '생활용품', '의료비', '문화생활', '통신비', '기타']
+const incomeTitleOptions = ['월급', '상여', '용돈', '환급', '이자', '부수입', '기타']
+const expenseCategoryOptions = ['생활비', '식비', '교통', '주거', '쇼핑', '건강', '문화', '고정지출', '기타']
+const incomeCategoryOptions = ['고정수입', '보너스', '금융수입', '부수입', '기타']
+const paymentMethodOptions = ['카드', '현금', '계좌이체', '간편결제', '자동이체', '기타']
+const budgetTitleOptions = computed(() =>
+  budgetForm.kind === 'income' ? incomeTitleOptions : expenseTitleOptions
+)
+const budgetCategoryOptions = computed(() =>
+  budgetForm.kind === 'income' ? incomeCategoryOptions : expenseCategoryOptions
+)
+const toastMessage = ref('')
+const toastTone = ref<'success' | 'error'>('success')
+const showToast = ref(false)
+const readingValidationActive = ref(false)
+const budgetValidationActive = ref(false)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 const totalBooks = computed(() => readingHistory.value.length)
 const completedBooks = computed(
@@ -56,6 +107,21 @@ const averageRating = computed(() => {
   if (!rated.length) return 0
   const total = rated.reduce((sum, book) => sum + (book.rating ?? 0), 0)
   return Number((total / rated.length).toFixed(1))
+})
+const averageRatingStars = computed(() => {
+  const roundedRating = Math.round(averageRating.value)
+  if (!roundedRating) return '-'
+  return `${'★'.repeat(roundedRating)}${'☆'.repeat(5 - roundedRating)}`
+})
+
+const getTodayDate = () => new Date().toISOString().slice(0, 10)
+
+const currentReadingTitle = computed(() => {
+  const currentBook = readingHistory.value
+    .filter((book) => book.status === 'reading')
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]
+
+  return currentBook?.title ?? '-'
 })
 
 const totalExpense = computed(() =>
@@ -70,7 +136,7 @@ const totalIncome = computed(() =>
     .reduce((sum, entry) => sum + entry.amount, 0)
 )
 
-const balance = computed(() => totalIncome.value - totalExpense.value)
+const balance = computed(() => currentBalance.value + totalIncome.value - totalExpense.value)
 const availableBudgetYears = computed(() => {
   const years = Array.from(new Set(budgetEntries.value.map((entry) => Number(entry.spentAt.slice(0, 4)))))
     .sort((a, b) => a - b)
@@ -131,7 +197,7 @@ const previousMonthNet = computed(() => previousMonthIncome.value - previousMont
 const monthDelta = (current: number, previous: number) => current - previous
 
 const monthlyBudgetRows = computed(() => {
-  let cumulative = 0
+  let cumulative = currentBalance.value
 
   return Array.from({ length: 12 }, (_, index) => {
     const month = index + 1
@@ -155,7 +221,7 @@ const monthlyBudgetRows = computed(() => {
 })
 
 const monthCumulativeBalance = computed(
-  () => monthlyBudgetRows.value.find((row) => row.month === budgetReferenceMonth.value)?.cumulative ?? 0
+  () => monthlyBudgetRows.value.find((row) => row.month === budgetReferenceMonth.value)?.cumulative ?? currentBalance.value
 )
 
 const topExpenseCategories = computed(() => {
@@ -346,12 +412,12 @@ const incomeDonutStyle = computed(() => {
   const gradient = incomeDonutSegments.value
     .map((segment) => {
       const colorMap: Record<string, string> = {
-        mint: '#2eb8a3',
-        coral: '#ff7a45',
-        sky: '#5a9df2',
-        gold: '#f0ad2c',
-        rose: '#f06a92',
-        slate: '#70849d'
+        mint: '#147d6f',
+        coral: '#147d6f',
+        sky: '#147d6f',
+        gold: '#147d6f',
+        rose: '#147d6f',
+        slate: '#147d6f'
       }
 
       return `${colorMap[segment.color]} ${segment.start}deg ${segment.end}deg`
@@ -363,14 +429,51 @@ const incomeDonutStyle = computed(() => {
 
 const expenseTreemap = computed(() => {
   const total = topExpenseCategoriesLarge.value.reduce((sum, item) => sum + item.amount, 0) || 1
-  const palette = ['#bc4c3d', '#da5a47', '#ef6b5a', '#f58f84', '#f7b0a8']
 
-  return topExpenseCategoriesLarge.value.map((item, index) => ({
+  return topExpenseCategoriesLarge.value.map((item) => ({
     ...item,
     width: `${Math.max(18, (item.amount / total) * 100)}%`,
-    color: palette[index % palette.length]
+    color: '#cc4b1f'
   }))
 })
+
+const isWorkingState = (state: SyncPhase) =>
+  state === 'loading' || state === 'saving' || state === 'deleting' || state === 'refreshing'
+
+const readingBusy = computed(() => isWorkingState(readingSyncState.value))
+const budgetBusy = computed(() => isWorkingState(budgetSyncState.value))
+const financeBusy = computed(() => isWorkingState(financeSyncState.value))
+
+const openToast = (message: string, tone: 'success' | 'error' = 'success') => {
+  toastMessage.value = message
+  toastTone.value = tone
+  showToast.value = true
+
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+  }
+
+  toastTimer = setTimeout(() => {
+    showToast.value = false
+  }, 1800)
+}
+
+const toggleActiveTab = () => {
+  activeTab.value = activeTab.value === 'reading' ? 'budget' : 'reading'
+  openToast(activeTab.value === 'reading' ? '독서 모드로 전환되었습니다.' : '가계부 모드로 전환되었습니다.')
+}
+
+const resetAllData = () => {
+  readingHistory.value = []
+  budgetEntries.value = []
+  currentBalance.value = 0
+  readingModalOpen.value = false
+  budgetModalOpen.value = false
+  financeModalOpen.value = false
+  resetForm()
+  resetBudgetForm()
+  syncBalanceInput()
+}
 
 watch(
   latestBudgetDate,
@@ -445,6 +548,22 @@ useHead({
 const resetForm = () => {
   editingId.value = null
   Object.assign(form, emptyForm())
+  readingValidationActive.value = false
+  Object.assign(readingErrors, {
+    title: '',
+    startedAt: '',
+    finishedAt: ''
+  })
+}
+
+const openReadingModal = () => {
+  resetForm()
+  readingModalOpen.value = true
+}
+
+const closeReadingModal = () => {
+  readingModalOpen.value = false
+  resetForm()
 }
 
 const startEditing = (id: number) => {
@@ -462,17 +581,68 @@ const startEditing = (id: number) => {
     memo: target.memo,
     status: target.status
   })
+  readingModalOpen.value = true
 }
 
-const submitForm = () => {
-  if (!form.genre || !form.title || !form.startedAt || !form.memo) return
+const validateReadingForm = () => {
+  readingErrors.title = form.title.trim() ? '' : '제목을 입력해주세요.'
+  readingErrors.startedAt = ''
+  readingErrors.finishedAt = form.status === 'finished' && !form.finishedAt
+    ? '완독 기록은 완료일을 선택해주세요.'
+    : ''
+
+  return !readingErrors.title && !readingErrors.startedAt && !readingErrors.finishedAt
+}
+
+const persistReading = async () => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return false
+  const saved = await saveReadingSnapshot(readingHistory.value)
+  if (saved) {
+    openToast('독서 기록이 저장되었습니다.')
+    return true
+  } else if (readingSyncError.value) {
+    openToast(`저장 실패: ${readingSyncError.value}`, 'error')
+  }
+  return false
+}
+
+const refreshReading = async (notify = true) => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  const snapshot = await fetchReadingSnapshot('refreshing')
+
+  if (snapshot) {
+    readingHistory.value = snapshot.items
+    if (notify) {
+      openToast('독서 기록을 새로고침했습니다.')
+    }
+    return
+  }
+
+  if (!readingSyncError.value) {
+    const saved = await saveReadingSnapshot(readingHistory.value)
+    if (saved) {
+      openToast('독서 기록이 저장되었습니다.')
+    }
+  }
+}
+
+const submitForm = async () => {
+  readingValidationActive.value = true
+  if (!validateReadingForm()) return
+  const startedAt = form.startedAt || getTodayDate()
+
+  const existingEntry = editingId.value
+    ? readingHistory.value.find((book) => book.id === editingId.value)
+    : null
 
   saveBook({
     id: editingId.value ?? undefined,
+    createdAt: existingEntry?.createdAt ?? new Date().toISOString(),
     genre: form.genre,
     title: form.title,
     author: form.author || undefined,
-    startedAt: form.startedAt,
+    startedAt,
     finishedAt: form.finishedAt || undefined,
     rating: form.rating ? Number(form.rating) : undefined,
     memo: form.memo,
@@ -480,15 +650,61 @@ const submitForm = () => {
   })
 
   resetForm()
+  readingModalOpen.value = false
+  await persistReading()
 }
 
-const handleStatusChange = ({ id, status }: { id: number; status: BookEntry['status'] }) => {
+const handleStatusChange = async ({ id, status }: { id: number; status: BookEntry['status'] }) => {
   updateStatus(id, status)
+  await persistReading()
+}
+
+const handleDeleteBook = async (id: number) => {
+  const previousItems = [...readingHistory.value]
+  deleteBook(id)
+
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  readingSyncState.value = 'deleting'
+  const didSave = await saveReadingSnapshot(readingHistory.value)
+
+  if (!didSave) {
+    readingHistory.value = previousItems
+    if (readingSyncError.value) {
+      openToast(`삭제 실패: ${readingSyncError.value}`, 'error')
+    }
+    return
+  }
+
+  await refreshReading()
+  openToast('독서 기록이 삭제되었습니다.')
 }
 
 const resetBudgetForm = () => {
   budgetEditingId.value = null
   Object.assign(budgetForm, emptyBudgetForm())
+  budgetValidationActive.value = false
+  Object.assign(budgetErrors, {
+    title: '',
+    category: '',
+    amount: '',
+    spentAt: ''
+  })
+}
+
+const openBudgetModal = () => {
+  resetBudgetForm()
+  budgetModalOpen.value = true
+}
+
+const closeBudgetModal = () => {
+  budgetModalOpen.value = false
+  resetBudgetForm()
+}
+
+const openFinanceModal = () => {
+  syncBalanceInput()
+  financeModalOpen.value = true
 }
 
 const startBudgetEditing = (id: number) => {
@@ -497,23 +713,73 @@ const startBudgetEditing = (id: number) => {
 
   budgetEditingId.value = id
   Object.assign(budgetForm, {
+    kind: target.kind,
     title: target.title,
     category: target.category,
     amount: String(target.amount),
     spentAt: target.spentAt,
     paymentMethod: target.paymentMethod ?? '',
-    memo: target.memo ?? '',
-    kind: target.kind
+    memo: target.memo ?? ''
   })
+  budgetModalOpen.value = true
 }
 
-const submitBudgetForm = () => {
-  if (!budgetForm.title || !budgetForm.category || !budgetForm.amount || !budgetForm.spentAt) {
+const persistBudget = async () => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return false
+  const saved = await saveBudgetSnapshot(budgetEntries.value)
+  if (saved) {
+    openToast('가계부 기록이 저장되었습니다.')
+    return true
+  } else if (budgetSyncError.value) {
+    openToast(`저장 실패: ${budgetSyncError.value}`, 'error')
+  }
+  return false
+}
+
+const refreshBudget = async (notify = true) => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  const snapshot = await fetchBudgetSnapshot('refreshing')
+
+  if (snapshot) {
+    budgetEntries.value = snapshot.items
+    if (notify) {
+      openToast('가계부 기록을 새로고침했습니다.')
+    }
     return
   }
 
+  if (!budgetSyncError.value) {
+    const saved = await saveBudgetSnapshot(budgetEntries.value)
+    if (saved) {
+      openToast('가계부 기록이 저장되었습니다.')
+    }
+  }
+}
+
+const validateBudgetForm = () => {
+  const amount = Number(budgetForm.amount)
+
+  budgetErrors.title = budgetForm.title ? '' : '내역을 선택해주세요.'
+  budgetErrors.category = budgetForm.category ? '' : '카테고리를 선택해주세요.'
+  budgetErrors.amount = amount > 0 ? '' : '금액을 입력해주세요.'
+  budgetErrors.spentAt = budgetForm.spentAt ? '' : '날짜를 선택해주세요.'
+
+  return !budgetErrors.title && !budgetErrors.category && !budgetErrors.amount && !budgetErrors.spentAt
+}
+
+const submitBudgetForm = async () => {
+  budgetValidationActive.value = true
+  if (!validateBudgetForm()) return
+
+  const previousItems = [...budgetEntries.value]
+  const existingEntry = budgetEditingId.value
+    ? budgetEntries.value.find((entry) => entry.id === budgetEditingId.value)
+    : null
+
   saveEntry({
     id: budgetEditingId.value ?? undefined,
+    createdAt: existingEntry?.createdAt ?? new Date().toISOString(),
     title: budgetForm.title,
     category: budgetForm.category,
     amount: Number(budgetForm.amount),
@@ -523,92 +789,308 @@ const submitBudgetForm = () => {
     kind: budgetForm.kind
   })
 
+  const didSave = await persistBudget()
+
+  if (!didSave && isCloudConfigured.value && isAuthenticated.value) {
+    budgetEntries.value = previousItems
+    return
+  }
+
   resetBudgetForm()
+  budgetModalOpen.value = false
 }
+
+const syncBalanceInput = () => {
+  balanceInput.value = String(currentBalance.value)
+}
+
+const persistFinance = async () => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return false
+  const saved = await saveFinanceSummary(currentBalance.value)
+  if (saved) {
+    openToast('현재 잔고가 저장되었습니다.')
+    return true
+  } else if (financeSyncError.value) {
+    openToast(`저장 실패: ${financeSyncError.value}`, 'error')
+  }
+  return false
+}
+
+const refreshFinance = async (notify = true) => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  const snapshot = await fetchFinanceSummary('refreshing')
+
+  if (snapshot) {
+    currentBalance.value = snapshot.currentBalance
+    syncBalanceInput()
+    if (notify) {
+      openToast('현재 잔고를 새로고침했습니다.')
+    }
+    return
+  }
+
+  if (!financeSyncError.value) {
+    const saved = await saveFinanceSummary(currentBalance.value)
+    if (saved) {
+      openToast('현재 잔고가 저장되었습니다.')
+    }
+  }
+}
+
+const submitBalance = async () => {
+  currentBalance.value = Number(balanceInput.value) || 0
+  await persistFinance()
+  financeModalOpen.value = false
+}
+
+onMounted(() => {
+  syncBalanceInput()
+})
+
+watch(currentBalance, () => {
+  syncBalanceInput()
+})
+
+watch(
+  () => budgetForm.kind,
+  (kind) => {
+    budgetForm.title = kind === 'income' ? incomeTitleOptions[0] : expenseTitleOptions[0]
+    budgetForm.category = kind === 'income' ? incomeCategoryOptions[0] : expenseCategoryOptions[0]
+  }
+)
+
+watch(
+  () => [form.title, form.startedAt, form.finishedAt, form.status],
+  () => {
+    if (!readingValidationActive.value) return
+    validateReadingForm()
+  }
+)
+
+watch(
+  () => [budgetForm.title, budgetForm.category, budgetForm.amount, budgetForm.spentAt],
+  () => {
+    if (!budgetValidationActive.value) return
+    validateBudgetForm()
+  }
+)
+
+const handleDeleteBudgetEntry = async (id: number) => {
+  const previousItems = [...budgetEntries.value]
+  deleteEntry(id)
+
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  budgetSyncState.value = 'deleting'
+  const didSave = await saveBudgetSnapshot(budgetEntries.value)
+
+  if (!didSave) {
+    budgetEntries.value = previousItems
+    if (budgetSyncError.value) {
+      openToast(`삭제 실패: ${budgetSyncError.value}`, 'error')
+    }
+    return
+  }
+
+  await refreshBudget()
+  openToast('가계부 기록이 삭제되었습니다.')
+}
+
+onMounted(async () => {
+  if (!isCloudConfigured.value || !isAuthenticated.value) return
+
+  const readingSnapshot = await fetchReadingSnapshot()
+  if (readingSnapshot) {
+    readingHistory.value = readingSnapshot.items
+  } else if (!readingSyncError.value) {
+    await saveReadingSnapshot(readingHistory.value)
+  }
+
+  const budgetSnapshot = await fetchBudgetSnapshot()
+  if (budgetSnapshot) {
+    budgetEntries.value = budgetSnapshot.items
+  } else if (!budgetSyncError.value) {
+    await saveBudgetSnapshot(budgetEntries.value)
+  }
+
+  const financeSnapshot = await fetchFinanceSummary()
+  if (financeSnapshot) {
+    currentBalance.value = financeSnapshot.currentBalance
+  } else if (!financeSyncError.value) {
+    await saveFinanceSummary(currentBalance.value)
+  }
+
+  syncBalanceInput()
+})
+
+watch(
+  () => user.value?.uid,
+  async (uid) => {
+    if (!authReady.value) return
+
+    resetAllData()
+
+    if (!uid || !isCloudConfigured.value) {
+      return
+    }
+
+    await refreshReading(false)
+    await refreshBudget(false)
+    await refreshFinance(false)
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <section class="archive-page">
-    <div class="archive-page__hero">
-      <p class="archive-page__eyebrow">Personal Archive Hub</p>
-      <h1>{{ activeTab === 'reading' ? '독서 아카이브' : '가계부 아카이브' }}</h1>
-      <p class="archive-page__desc">
-        {{ activeTab === 'reading'
-          ? '읽었던 책을 모아보고, 현재 읽는 흐름까지 한 화면에서 정리하는 개인 독서 대시보드'
-          : '수입과 지출을 가볍게 기록하고, 흐름을 한 화면에서 살펴보는 개인 가계부 대시보드' }}
-      </p>
-    </div>
-
-    <div class="tab-bar" role="tablist" aria-label="아카이브 탭">
+  <section class="archive-page" :data-mode="activeTab">
+    <header class="archive-header">
       <button
         type="button"
-        class="tab-button"
-        :data-active="activeTab === 'reading'"
-        @click="activeTab = 'reading'"
+        class="archive-brand"
+        :data-mode="activeTab"
+        :aria-label="activeTab === 'reading' ? '가계부로 전환' : '독서로 전환'"
+        @click="toggleActiveTab"
       >
-       독서
+        <span class="archive-brand__mark" aria-hidden="true">A</span>
+        <div>
+          <strong>{{ user?.displayName ? `${user.displayName}의 Archive Hub` : 'Archive Hub' }}</strong>
+          <span>{{ activeTab === 'reading' ? '독서 모드' : '가계부 모드' }}</span>
+        </div>
       </button>
-      <button
-        type="button"
-        class="tab-button"
-        :data-active="activeTab === 'budget'"
-        @click="activeTab = 'budget'"
-      >
-        가계부
-      </button>
-    </div>
 
-    <div v-if="activeTab === 'reading'" class="archive-stats">
+      <label v-if="user" class="archive-search">
+        <input
+          v-if="activeTab === 'reading'"
+          v-model="query"
+          type="search"
+          placeholder="제목, 저자, 장르 검색"
+          aria-label="책 검색"
+        >
+        <input
+          v-else
+          v-model="budgetQuery"
+          type="search"
+          placeholder="내역, 카테고리, 메모 검색"
+          aria-label="가계부 검색"
+        >
+      </label>
+
+      <div class="auth-bar">
+        <template v-if="user">
+          <button type="button" class="ghost-button" :disabled="authPending" @click="logout">
+            로그아웃
+          </button>
+        </template>
+        <template v-else>
+          <p class="auth-bar__hint">구글 로그인 후 계정별로 독서/가계부 데이터가 분리됩니다.</p>
+          <button type="button" class="primary-button" :disabled="authPending" @click="loginWithGoogle">
+            Google 로그인
+          </button>
+        </template>
+      </div>
+      <p v-if="authError" class="entry-form__hint">인증 오류: {{ authError }}</p>
+    </header>
+
+    <section v-if="authReady && !user" class="budget-panel auth-empty">
+      <h2>로그인이 필요합니다</h2>
+      <p>구글 로그인 후 내 계정 기준으로 독서 기록, 가계부, 현재 잔고가 따로 저장됩니다.</p>
+    </section>
+
+    <div v-if="user && activeTab === 'reading'" class="archive-stats">
       <article class="stat-card">
         <p>전체 도서</p>
         <strong>{{ totalBooks }}</strong>
       </article>
       <article class="stat-card">
-        <p>완독 수</p>
+        <p>완독 도서</p>
         <strong>{{ completedBooks }}</strong>
       </article>
       <article class="stat-card">
         <p>평균 평점</p>
-        <strong>{{ averageRating }}</strong>
+        <strong class="rating-stars">{{ averageRatingStars }}</strong>
+        <small v-if="averageRating">{{ averageRating }}/5</small>
+      </article>
+      <article class="stat-card">
+        <p>현재 읽는 도서</p>
+        <strong class="stat-card__title">{{ currentReadingTitle }}</strong>
       </article>
     </div>
 
-    <section v-if="activeTab === 'budget'" class="budget-dashboard">
+    <section v-if="user && activeTab === 'budget'" class="budget-dashboard">
       <div class="budget-dashboard__top">
-        <div class="budget-dashboard__filters">
-          <label class="selector-card">
-            <span>기준년도</span>
-            <select v-model.number="budgetReferenceYear">
-              <option v-for="year in availableBudgetYears" :key="year" :value="year">
-                {{ year }}
-              </option>
-            </select>
-          </label>
-          <label class="selector-card">
-            <span>기준월</span>
-            <select v-model.number="budgetReferenceMonth">
-              <option v-for="month in 12" :key="month" :value="month">
-                {{ month }}
-              </option>
-            </select>
-          </label>
+        <div class="budget-dashboard__toolbar">
+          <div class="budget-dashboard__filters">
+            <label class="selector-card">
+              <span>기준년도</span>
+              <select v-model.number="budgetReferenceYear">
+                <option v-for="year in availableBudgetYears" :key="year" :value="year">
+                  {{ year }}
+                </option>
+              </select>
+            </label>
+            <label class="selector-card">
+              <span>기준월</span>
+              <select v-model.number="budgetReferenceMonth">
+                <option v-for="month in 12" :key="month" :value="month">
+                  {{ month }}
+                </option>
+              </select>
+            </label>
+            <label class="selector-card">
+              <span>구분</span>
+              <select v-model="budgetKindFilter" aria-label="가계부 구분 필터">
+                <option value="all">전체</option>
+                <option value="expense">지출</option>
+                <option value="income">수입</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="archive-controls__actions budget-dashboard__actions">
+            <button type="button" class="ghost-button" @click="openFinanceModal">잔고 관리</button>
+            <button type="button" class="ghost-button icon-button" aria-label="가계부 기록 새로고침" title="새로고침" @click="refreshBudget">
+              <span class="refresh-icon" aria-hidden="true" />
+            </button>
+            <button type="button" class="primary-button" @click="openBudgetModal">가계부 추가</button>
+          </div>
         </div>
 
         <div class="budget-dashboard__metrics">
           <article class="metric-card">
+            <p>현재 잔고</p>
+            <strong>{{ currency.format(currentBalance) }}원</strong>
+          </article>
+          <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 수입</p>
             <strong>{{ currency.format(monthIncome) }}원</strong>
-            <small>{{ monthDelta(monthIncome, previousMonthIncome) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthIncome, previousMonthIncome))) }}</small>
+            <small
+              class="metric-card__delta"
+              :data-trend="monthDelta(monthIncome, previousMonthIncome) >= 0 ? 'up' : 'down'"
+            >
+              {{ monthDelta(monthIncome, previousMonthIncome) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthIncome, previousMonthIncome))) }}
+            </small>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 지출</p>
             <strong>{{ currency.format(monthExpense) }}원</strong>
-            <small>{{ monthDelta(monthExpense, previousMonthExpense) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthExpense, previousMonthExpense))) }}</small>
+            <small
+              class="metric-card__delta"
+              :data-trend="monthDelta(monthExpense, previousMonthExpense) >= 0 ? 'up' : 'down'"
+            >
+              {{ monthDelta(monthExpense, previousMonthExpense) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthExpense, previousMonthExpense))) }}
+            </small>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 수입-지출</p>
             <strong>{{ currency.format(monthNet) }}원</strong>
-            <small>{{ monthDelta(monthNet, previousMonthNet) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthNet, previousMonthNet))) }}</small>
+            <small
+              class="metric-card__delta"
+              :data-trend="monthDelta(monthNet, previousMonthNet) >= 0 ? 'up' : 'down'"
+            >
+              {{ monthDelta(monthNet, previousMonthNet) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthNet, previousMonthNet))) }}
+            </small>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 누적잔액</p>
@@ -766,7 +1248,7 @@ const submitBudgetForm = () => {
           </div>
         </section>
 
-        <section class="budget-panel">
+        <section class="budget-panel budget-panel--categories">
           <h2>{{ budgetReferenceMonth }}월 많이 소비한 항목</h2>
           <div class="category-bars">
             <div
@@ -788,27 +1270,84 @@ const submitBudgetForm = () => {
       </div>
     </section>
 
-    <div v-if="activeTab === 'reading'" class="archive-layout">
-      <section class="entry-panel">
+    <div v-if="user && activeTab === 'reading'" class="archive-list">
+      <section class="archive-list">
+        <div class="archive-controls">
+          <label class="field">
+            <span>상태</span>
+            <select v-model="selectedStatus" aria-label="독서 상태 필터">
+              <option value="all">전체</option>
+              <option value="finished">완독</option>
+              <option value="reading">읽는 중</option>
+              <option value="paused">잠시 멈춤</option>
+            </select>
+          </label>
+          <div class="archive-controls__actions">
+            <button type="button" class="ghost-button icon-button" aria-label="독서 기록 새로고침" title="새로고침" @click="refreshReading">
+              <span class="refresh-icon" aria-hidden="true" />
+            </button>
+            <button type="button" class="primary-button" @click="openReadingModal">독서 기록 추가</button>
+          </div>
+        </div>
+
+        <div class="book-grid">
+          <BookCard
+            v-for="book in filteredBooks"
+            :key="book.id"
+            :book="book"
+            @edit="startEditing"
+            @status-change="handleStatusChange"
+            @delete="handleDeleteBook"
+          />
+        </div>
+      </section>
+    </div>
+
+    <div v-else-if="user" class="archive-list">
+      <section class="archive-list">
+        <div class="book-grid">
+          <BudgetCard
+            v-for="entry in filteredBudgetEntries"
+            :key="entry.id"
+            :entry="entry"
+            @edit="startBudgetEditing"
+            @delete="handleDeleteBudgetEntry"
+          />
+        </div>
+      </section>
+    </div>
+
+    <div v-if="readingModalOpen" class="modal-backdrop" role="presentation" @click.self="closeReadingModal">
+      <section class="entry-panel modal-panel" role="dialog" aria-modal="true" aria-labelledby="reading-modal-title">
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Archive Editor</p>
-            <h2>{{ editingId ? '독서 기록 수정' : '새 독서 기록 추가' }}</h2>
+            <h2 id="reading-modal-title">{{ editingId ? '독서 기록 수정' : '새 독서 기록 추가' }}</h2>
           </div>
-          <button v-if="editingId" type="button" class="ghost-button" @click="resetForm">
-            새로 입력
-          </button>
+          <div class="entry-panel__actions">
+            <button v-if="editingId" type="button" class="ghost-button" @click="resetForm">새로 입력</button>
+            <button type="button" class="ghost-button" @click="closeReadingModal">닫기</button>
+          </div>
         </div>
 
-        <form class="entry-form" @submit.prevent="submitForm">
+        <div v-if="readingBusy" class="sync-progress" aria-hidden="true">
+          <span class="sync-progress__bar" />
+        </div>
+
+        <form class="entry-form" novalidate @submit.prevent="submitForm">
           <div class="entry-form__grid">
             <label class="field">
               <span>유형</span>
-              <input v-model="form.genre" type="text" placeholder="소설, 인문, 에세이">
+              <select v-model="form.genre">
+                <option v-for="genre in readingGenres" :key="genre" :value="genre">
+                  {{ genre }}
+                </option>
+              </select>
             </label>
             <label class="field">
               <span>제목</span>
               <input v-model="form.title" type="text" placeholder="책 제목">
+              <small v-if="readingErrors.title" class="field__error">{{ readingErrors.title }}</small>
             </label>
             <label class="field">
               <span>저자</span>
@@ -825,20 +1364,22 @@ const submitBudgetForm = () => {
             <label class="field">
               <span>시작</span>
               <input v-model="form.startedAt" type="date">
+              <small v-if="readingErrors.startedAt" class="field__error">{{ readingErrors.startedAt }}</small>
             </label>
             <label class="field">
               <span>완료</span>
               <input v-model="form.finishedAt" type="date">
+              <small v-if="readingErrors.finishedAt" class="field__error">{{ readingErrors.finishedAt }}</small>
             </label>
             <label class="field">
               <span>평점</span>
               <select v-model="form.rating">
                 <option value="">선택 안 함</option>
-                <option value="1">1점</option>
-                <option value="2">2점</option>
-                <option value="3">3점</option>
-                <option value="4">4점</option>
-                <option value="5">5점</option>
+                <option value="1">★☆☆☆☆</option>
+                <option value="2">★★☆☆☆</option>
+                <option value="3">★★★☆☆</option>
+                <option value="4">★★★★☆</option>
+                <option value="5">★★★★★</option>
               </select>
             </label>
             <label class="field field--full">
@@ -855,53 +1396,67 @@ const submitBudgetForm = () => {
             <button type="submit" class="primary-button">
               {{ editingId ? '기록 저장' : '아카이브에 추가' }}
             </button>
-            <p class="entry-form__hint">입력한 내용은 이 브라우저에 저장됩니다.</p>
+            <p v-if="readingBusy" class="entry-form__hint">독서 기록 동기화 중...</p>
+            <p v-else-if="readingSyncError" class="entry-form__hint">Firebase 오류: {{ readingSyncError }}</p>
           </div>
         </form>
       </section>
+    </div>
 
-      <section class="archive-list">
-        <div class="archive-controls">
-          <label class="field">
-            <span>검색</span>
-            <input v-model="query" type="search" placeholder="제목, 저자, 장르 검색" aria-label="책 검색">
-          </label>
-          <label class="field">
-            <span>상태</span>
-            <select v-model="selectedStatus" aria-label="독서 상태 필터">
-              <option value="all">전체</option>
-              <option value="finished">완독</option>
-              <option value="reading">읽는 중</option>
-              <option value="paused">잠시 멈춤</option>
-            </select>
-          </label>
+    <div v-if="financeModalOpen" class="modal-backdrop" role="presentation" @click.self="financeModalOpen = false">
+      <section class="entry-panel modal-panel modal-panel--small" role="dialog" aria-modal="true" aria-labelledby="finance-modal-title">
+        <div class="entry-panel__head">
+          <div>
+            <p class="entry-panel__eyebrow">Balance</p>
+            <h2 id="finance-modal-title">현재 잔고 관리</h2>
+          </div>
+          <div class="entry-panel__actions">
+            <button type="button" class="ghost-button icon-button" aria-label="현재 잔고 새로고침" title="새로고침" @click="refreshFinance">
+              <span class="refresh-icon" aria-hidden="true" />
+            </button>
+            <button type="button" class="ghost-button" @click="financeModalOpen = false">닫기</button>
+          </div>
         </div>
 
-        <div class="book-grid">
-          <BookCard
-            v-for="book in filteredBooks"
-            :key="book.id"
-            :book="book"
-            @edit="startEditing"
-            @status-change="handleStatusChange"
-          />
+        <div v-if="financeBusy" class="sync-progress" aria-hidden="true">
+          <span class="sync-progress__bar" />
         </div>
+
+        <form class="entry-form" novalidate @submit.prevent="submitBalance">
+          <div class="entry-form__grid">
+            <label class="field">
+              <span>현재 잔고</span>
+              <input v-model="balanceInput" type="number" step="1000" placeholder="0">
+            </label>
+          </div>
+
+          <div class="entry-form__actions">
+            <button type="submit" class="primary-button">잔고 저장</button>
+            <p v-if="financeBusy" class="entry-form__hint">잔고 동기화 중...</p>
+            <p v-else-if="financeSyncError" class="entry-form__hint">Firebase 오류: {{ financeSyncError }}</p>
+          </div>
+        </form>
       </section>
     </div>
 
-    <div v-else class="archive-layout">
-      <section class="entry-panel">
+    <div v-if="budgetModalOpen" class="modal-backdrop" role="presentation" @click.self="closeBudgetModal">
+      <section class="entry-panel modal-panel" role="dialog" aria-modal="true" aria-labelledby="budget-modal-title">
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Budget Editor</p>
-            <h2>{{ budgetEditingId ? '가계부 항목 수정' : '새 가계부 기록 추가' }}</h2>
+            <h2 id="budget-modal-title">{{ budgetEditingId ? '가계부 항목 수정' : '새 가계부 기록 추가' }}</h2>
           </div>
-          <button v-if="budgetEditingId" type="button" class="ghost-button" @click="resetBudgetForm">
-            새로 입력
-          </button>
+          <div class="entry-panel__actions">
+            <button v-if="budgetEditingId" type="button" class="ghost-button" @click="resetBudgetForm">새로 입력</button>
+            <button type="button" class="ghost-button" @click="closeBudgetModal">닫기</button>
+          </div>
         </div>
 
-        <form class="entry-form" @submit.prevent="submitBudgetForm">
+        <div v-if="budgetBusy" class="sync-progress" aria-hidden="true">
+          <span class="sync-progress__bar" />
+        </div>
+
+        <form class="entry-form" novalidate @submit.prevent="submitBudgetForm">
           <div class="entry-form__grid">
             <label class="field">
               <span>구분</span>
@@ -912,23 +1467,39 @@ const submitBudgetForm = () => {
             </label>
             <label class="field">
               <span>내역</span>
-              <input v-model="budgetForm.title" type="text" placeholder="식비, 월급, 교통비">
+              <select v-model="budgetForm.title">
+                <option v-for="title in budgetTitleOptions" :key="title" :value="title">
+                  {{ title }}
+                </option>
+              </select>
+              <small v-if="budgetErrors.title" class="field__error">{{ budgetErrors.title }}</small>
             </label>
             <label class="field">
               <span>카테고리</span>
-              <input v-model="budgetForm.category" type="text" placeholder="식비, 생활, 수입">
+              <select v-model="budgetForm.category">
+                <option v-for="category in budgetCategoryOptions" :key="category" :value="category">
+                  {{ category }}
+                </option>
+              </select>
+              <small v-if="budgetErrors.category" class="field__error">{{ budgetErrors.category }}</small>
             </label>
             <label class="field">
               <span>금액</span>
               <input v-model="budgetForm.amount" type="number" min="0" step="100" placeholder="0">
+              <small v-if="budgetErrors.amount" class="field__error">{{ budgetErrors.amount }}</small>
             </label>
             <label class="field">
               <span>날짜</span>
               <input v-model="budgetForm.spentAt" type="date">
+              <small v-if="budgetErrors.spentAt" class="field__error">{{ budgetErrors.spentAt }}</small>
             </label>
             <label class="field">
               <span>결제수단</span>
-              <input v-model="budgetForm.paymentMethod" type="text" placeholder="카드, 현금, 이체">
+              <select v-model="budgetForm.paymentMethod">
+                <option v-for="method in paymentMethodOptions" :key="method" :value="method">
+                  {{ method }}
+                </option>
+              </select>
             </label>
             <label class="field field--full">
               <span>메모</span>
@@ -944,36 +1515,15 @@ const submitBudgetForm = () => {
             <button type="submit" class="primary-button">
               {{ budgetEditingId ? '항목 저장' : '가계부에 추가' }}
             </button>
-            <p class="entry-form__hint">가계부 기록도 이 브라우저에 저장됩니다.</p>
+            <p v-if="budgetBusy" class="entry-form__hint">가계부 동기화 중...</p>
+            <p v-else-if="budgetSyncError" class="entry-form__hint">Firebase 오류: {{ budgetSyncError }}</p>
           </div>
         </form>
       </section>
+    </div>
 
-      <section class="archive-list">
-        <div class="archive-controls">
-          <label class="field">
-            <span>검색</span>
-            <input v-model="budgetQuery" type="search" placeholder="내역, 카테고리, 메모 검색" aria-label="가계부 검색">
-          </label>
-          <label class="field">
-            <span>구분</span>
-            <select v-model="budgetKindFilter" aria-label="가계부 구분 필터">
-              <option value="all">전체</option>
-              <option value="expense">지출</option>
-              <option value="income">수입</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="book-grid">
-          <BudgetCard
-            v-for="entry in filteredBudgetEntries"
-            :key="entry.id"
-            :entry="entry"
-            @edit="startBudgetEditing"
-          />
-        </div>
-      </section>
+    <div v-if="showToast" class="toast" :data-tone="toastTone" role="status" aria-live="polite">
+      {{ toastMessage }}
     </div>
   </section>
 </template>

@@ -7,6 +7,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   edit: [id: number]
+  delete: [id: number]
 }>()
 
 const currency = new Intl.NumberFormat('ko-KR')
@@ -15,16 +16,21 @@ const currency = new Intl.NumberFormat('ko-KR')
 <template>
   <article class="budget-card" :data-kind="props.entry.kind">
     <header class="budget-card__header">
-      <div>
-        <p class="budget-card__category">{{ props.entry.category }}</p>
+      <div class="budget-card__main">
+        <div class="budget-card__eyebrow">
+          <span class="budget-card__kind" :data-kind="props.entry.kind">
+            {{ props.entry.kind === 'expense' ? '지출' : '수입' }}
+          </span>
+          <p class="budget-card__category">{{ props.entry.category }}</p>
+        </div>
         <h3 class="budget-card__title">{{ props.entry.title }}</h3>
       </div>
-      <div class="budget-card__side">
-        <span class="budget-card__kind" :data-kind="props.entry.kind">
-          {{ props.entry.kind === 'expense' ? '지출' : '수입' }}
-        </span>
-        <button class="book-card__edit" type="button" @click="emit('edit', props.entry.id)">
-          수정
+      <div class="book-card__actions">
+        <button class="book-card__edit" type="button" aria-label="가계부 항목 수정" @click="emit('edit', props.entry.id)">
+          <span class="action-icon action-icon--edit" aria-hidden="true" />
+        </button>
+        <button class="book-card__delete" type="button" aria-label="가계부 항목 삭제" @click="emit('delete', props.entry.id)">
+          <span class="action-icon action-icon--delete" aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -44,6 +50,9 @@ const currency = new Intl.NumberFormat('ko-KR')
       </div>
     </dl>
 
-    <p v-if="props.entry.memo" class="book-card__memo">{{ props.entry.memo }}</p>
+    <div v-if="props.entry.memo" class="budget-card__memo">
+      <span>메모</span>
+      <p>{{ props.entry.memo }}</p>
+    </div>
   </article>
 </template>

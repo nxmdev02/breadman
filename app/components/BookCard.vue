@@ -7,6 +7,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   edit: [id: number]
+  delete: [id: number]
   statusChange: [payload: { id: number; status: BookEntry['status'] }]
 }>()
 
@@ -15,18 +16,30 @@ const statusText: Record<BookEntry['status'], string> = {
   reading: '읽는 중',
   paused: '잠시 멈춤'
 }
+
+const ratingStars = computed(() => {
+  if (!props.book.rating) return '-'
+  return `${'★'.repeat(props.book.rating)}${'☆'.repeat(5 - props.book.rating)}`
+})
 </script>
 
 <template>
   <article class="book-card">
     <header class="book-card__header">
-      <p class="book-card__genre">{{ props.book.genre }}</p>
+      <div class="book-card__main">
+        <div class="book-card__eyebrow">
+          <span class="book-card__status" :data-status="props.book.status">
+            {{ statusText[props.book.status] }}
+          </span>
+          <p class="book-card__genre">{{ props.book.genre }}</p>
+        </div>
+      </div>
       <div class="book-card__actions">
-        <span class="book-card__status" :data-status="props.book.status">
-          {{ statusText[props.book.status] }}
-        </span>
-        <button class="book-card__edit" type="button" @click="emit('edit', props.book.id)">
-          수정
+        <button class="book-card__edit" type="button" aria-label="독서 기록 수정" @click="emit('edit', props.book.id)">
+          <span class="action-icon action-icon--edit" aria-hidden="true" />
+        </button>
+        <button class="book-card__delete" type="button" aria-label="독서 기록 삭제" @click="emit('delete', props.book.id)">
+          <span class="action-icon action-icon--delete" aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -44,11 +57,11 @@ const statusText: Record<BookEntry['status'], string> = {
       </div>
       <div>
         <dt>평점</dt>
-        <dd>{{ props.book.rating ? `${props.book.rating}/5` : '-' }}</dd>
+        <dd class="rating-stars">{{ ratingStars }}</dd>
       </div>
     </dl>
 
-    <p class="book-card__memo">{{ props.book.memo }}</p>
+    <p v-if="props.book.memo" class="book-card__memo">{{ props.book.memo }}</p>
 
     <label class="book-card__status-field">
       <span>상태</span>
