@@ -1143,6 +1143,63 @@ body {
   flex: 1 1 auto;
 }
 
+.book-suggestions {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.15rem;
+}
+
+.book-suggestions__item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f7fcfa;
+  text-align: left;
+}
+
+.book-suggestions__item img,
+.book-suggestions__thumb {
+  width: 42px;
+  height: 60px;
+  border-radius: 8px;
+}
+
+.book-suggestions__item img {
+  object-fit: cover;
+  border: 1px solid rgba(46, 87, 75, 0.08);
+}
+
+.book-suggestions__thumb {
+  display: grid;
+  place-items: center;
+  background: #eef6f2;
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.book-suggestions__text {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.book-suggestions__text strong,
+.book-suggestions__text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-suggestions__text small {
+  color: var(--text-soft);
+}
+
 .field span {
   color: var(--text-soft);
   font-size: 0.88rem;

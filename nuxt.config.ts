@@ -21,7 +21,7 @@ export default defineNuxtConfig({
     }
   },
   runtimeConfig: {
-    googleBooksApiKey: process.env.GOOGLE_BOOKS_API_KEY,
+    aladinTtbKey: process.env.ALADIN_TTB_KEY,
     public: {
       firebaseApiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY,
       firebaseAuthDomain: process.env.NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN,

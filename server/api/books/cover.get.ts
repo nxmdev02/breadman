@@ -1,21 +1,21 @@
 const normalizeText = (value?: string) => (value ?? '').trim().toLowerCase()
 
-const scoreVolume = (
+const scoreItem = (
   item: {
-    volumeInfo?: {
-      title?: string
-      authors?: string[]
-      imageLinks?: Record<string, string>
-    }
+    author?: string
+    cover?: string
+    title?: string
   },
   title: string,
   author: string
 ) => {
-  const volumeInfo = item.volumeInfo ?? {}
   const normalizedTitle = normalizeText(title)
   const normalizedAuthor = normalizeText(author)
-  const candidateTitle = normalizeText(volumeInfo.title)
-  const candidateAuthors = (volumeInfo.authors ?? []).map(normalizeText)
+  const candidateTitle = normalizeText(item.title)
+  const candidateAuthors = (item.author ?? '')
+    .split(',')
+    .map(normalizeText)
+    .filter(Boolean)
 
   let score = 0
 
@@ -26,7 +26,7 @@ const scoreVolume = (
     score += 4
   }
 
-  if (volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail) {
+  if (item.cover) {
     score += 2
   }
 
@@ -43,45 +43,40 @@ export default defineEventHandler(async (event) => {
   }
 
   const config = useRuntimeConfig(event)
-  const searchTerms = [`intitle:${title}`]
-  if (author) searchTerms.push(`inauthor:${author}`)
+
+  if (!config.aladinTtbKey) {
+    throw createError({ statusCode: 500, statusMessage: 'ALADIN_TTB_KEY is required' })
+  }
 
   const response = await $fetch<{
-    items?: Array<{
-      id: string
-      volumeInfo?: {
-        title?: string
-        authors?: string[]
-        description?: string
-        imageLinks?: {
-          smallThumbnail?: string
-          thumbnail?: string
-        }
-      }
+    item?: Array<{
+      author?: string
+      cover?: string
+      description?: string
+      title?: string
     }>
-  }>('https://www.googleapis.com/books/v1/volumes', {
+  }>('https://www.aladin.co.kr/ttb/api/ItemSearch.aspx', {
     query: {
-      q: searchTerms.join('+'),
+      Cover: 'Big',
       maxResults: 5,
-      projection: 'lite',
-      langRestrict: 'ko',
-      printType: 'books',
-      key: config.googleBooksApiKey || undefined
+      output: 'js',
+      Query: title,
+      QueryType: 'Title',
+      SearchTarget: 'Book',
+      start: 1,
+      ttbkey: config.aladinTtbKey,
+      Version: '20131101'
     }
   })
 
-  const bestMatch = (response.items ?? [])
-    .map((item) => ({ item, score: scoreVolume(item, title, author) }))
+  const bestMatch = (response.item ?? [])
+    .map((item) => ({ item, score: scoreItem(item, title, author) }))
     .sort((a, b) => b.score - a.score)[0]?.item
 
-  const image = bestMatch?.volumeInfo?.imageLinks?.thumbnail
-    ?? bestMatch?.volumeInfo?.imageLinks?.smallThumbnail
-    ?? null
-
   return {
-    authors: bestMatch?.volumeInfo?.authors ?? [],
-    description: bestMatch?.volumeInfo?.description ?? null,
-    image: image ? image.replace(/^http:\/\//, 'https://') : null,
-    title: bestMatch?.volumeInfo?.title ?? null
+    authors: bestMatch?.author ? bestMatch.author.split(',').map((candidate) => candidate.trim()).filter(Boolean) : [],
+    description: bestMatch?.description ?? null,
+    image: bestMatch?.cover ? bestMatch.cover.replace(/^http:\/\//, 'https://') : null,
+    title: bestMatch?.title ?? null
   }
 })

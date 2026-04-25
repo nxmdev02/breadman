@@ -32,6 +32,9 @@ const readingModalOpen = ref(false)
 const reviewModalOpen = ref(false)
 const reviewBookId = ref<number | null>(null)
 const reviewDraft = ref('')
+const titleLookupPending = ref(false)
+const titleLookupError = ref('')
+const titleSuggestions = ref<Array<{ id: string; title: string; authors: string[]; image: string | null }>>([])
 const coverLookupPending = ref(false)
 const coverLookupError = ref('')
 const budgetQuery = ref('')
@@ -181,6 +184,42 @@ const lookupBookCover = async () => {
   } finally {
     coverLookupPending.value = false
   }
+}
+
+const searchBookTitles = async (keyword: string) => {
+  const normalizedKeyword = keyword.trim()
+  titleLookupError.value = ''
+
+  if (normalizedKeyword.length < 2) {
+    titleSuggestions.value = []
+    titleLookupPending.value = false
+    return
+  }
+
+  titleLookupPending.value = true
+
+  try {
+    const result = await $fetch<{
+      items: Array<{ id: string; title: string; authors: string[]; image: string | null }>
+    }>('/api/books/search', {
+      query: { title: normalizedKeyword }
+    })
+
+    titleSuggestions.value = result.items
+  } catch {
+    titleSuggestions.value = []
+    titleLookupError.value = '책 제목 목록을 불러오지 못했습니다.'
+  } finally {
+    titleLookupPending.value = false
+  }
+}
+
+const applyBookSuggestion = (item: { title: string; authors: string[]; image: string | null }) => {
+  form.title = item.title
+  form.author = form.author || item.authors[0] || ''
+  form.coverImage = form.coverImage || item.image || ''
+  titleSuggestions.value = []
+  titleLookupError.value = ''
 }
 
 const fetchBookMetadata = async () => {
@@ -826,6 +865,9 @@ const openReadingModal = () => {
 
 const closeReadingModal = () => {
   readingModalOpen.value = false
+  titleLookupPending.value = false
+  titleLookupError.value = ''
+  titleSuggestions.value = []
   coverLookupPending.value = false
   coverLookupError.value = ''
   resetForm()
@@ -1742,8 +1784,26 @@ watch(
             </label>
             <label class="field">
               <span>제목</span>
-              <input v-model="form.title" type="text" placeholder="책 제목">
+              <input v-model="form.title" type="text" placeholder="책 제목" @input="searchBookTitles(form.title)">
               <small v-if="readingErrors.title" class="field__error">{{ readingErrors.title }}</small>
+              <small v-else-if="titleLookupPending" class="field__hint">책 제목을 찾는 중...</small>
+              <div v-if="titleSuggestions.length" class="book-suggestions">
+                <button
+                  v-for="item in titleSuggestions"
+                  :key="item.id"
+                  type="button"
+                  class="book-suggestions__item"
+                  @click="applyBookSuggestion(item)"
+                >
+                  <img v-if="item.image" :src="item.image" :alt="`${item.title} 표지`">
+                  <span v-else class="book-suggestions__thumb">책</span>
+                  <span class="book-suggestions__text">
+                    <strong>{{ item.title }}</strong>
+                    <small>{{ item.authors.join(', ') || '저자 정보 없음' }}</small>
+                  </span>
+                </button>
+              </div>
+              <small v-if="titleLookupError" class="field__error">{{ titleLookupError }}</small>
             </label>
             <label class="field">
               <span>저자</span>
