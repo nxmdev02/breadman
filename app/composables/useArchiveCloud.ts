@@ -19,7 +19,7 @@ const normalizeBudgetSnapshot = (snapshot?: Partial<BudgetSnapshot> | null): Bud
 })
 
 const normalizeFinanceSummary = (snapshot?: Partial<FinanceSummary> | null): FinanceSummary => ({
-  currentBalance: Number(snapshot?.currentBalance ?? 0),
+  startBalance: Number(snapshot?.startBalance ?? snapshot?.currentBalance ?? 0),
   updatedAt: typeof snapshot?.updatedAt === 'string' ? snapshot.updatedAt : undefined
 })
 
@@ -138,11 +138,11 @@ export const useArchiveCloud = () => {
       return normalizeFinanceSummary(financeSnapshot.data() as Partial<FinanceSummary>)
     })
 
-  const saveFinanceSummary = async (currentBalance: number) =>
+  const saveFinanceSummary = async (startBalance: number) =>
     runWithSync(financeSyncState, financeSyncError, 'saving', async () => {
       const financeRef = getFinanceRef()
       await setDoc(financeRef, {
-        currentBalance,
+        startBalance,
         updatedAt: new Date().toISOString()
       })
       return true

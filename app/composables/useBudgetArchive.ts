@@ -2,7 +2,7 @@ import type { BudgetEntry } from '~/types/finance'
 
 export const useBudgetArchive = () => {
   const budgetEntries = useState<BudgetEntry[]>('budget-entries', () => [])
-  const currentBalance = useState<number>('budget-current-balance', () => 0)
+  const startBalance = useState<number>('budget-start-balance', () => 0)
 
   const saveEntry = (entry: Omit<BudgetEntry, 'id'> & { id?: number }) => {
     const existingEntry = typeof entry.id === 'number'
@@ -30,7 +30,7 @@ export const useBudgetArchive = () => {
 
   return {
     budgetEntries,
-    currentBalance,
+    startBalance,
     saveEntry,
     deleteEntry
   }

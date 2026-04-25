@@ -4,7 +4,8 @@ import type { BudgetEntry } from '~/types/finance'
 export type SyncPhase = 'idle' | 'loading' | 'saving' | 'deleting' | 'refreshing' | 'error'
 
 export interface FinanceSummary {
-  currentBalance: number
+  startBalance: number
+  currentBalance?: number
   updatedAt?: string
 }
 

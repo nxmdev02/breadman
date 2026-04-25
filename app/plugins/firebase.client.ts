@@ -1,5 +1,4 @@
 import { initializeApp } from 'firebase/app'
-import { getAnalytics, isSupported } from 'firebase/analytics'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 
@@ -33,10 +32,12 @@ export default defineNuxtPlugin(async () => {
   const firebaseAuth = getAuth(firebaseApp)
   const firestore = getFirestore(firebaseApp)
 
-  let analytics: ReturnType<typeof getAnalytics> | null = null
+  let analytics: unknown = null
 
-  if (await isSupported()) {
-    analytics = getAnalytics(firebaseApp)
+  const analyticsModule = await import('firebase/analytics')
+
+  if (await analyticsModule.isSupported()) {
+    analytics = analyticsModule.getAnalytics(firebaseApp)
   }
 
   return {

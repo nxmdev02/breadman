@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { RefreshCw, Settings } from 'lucide-vue-next'
 import type { BookEntry, ReadingStatus } from '~/types/book'
 import type { BudgetEntry, BudgetKind } from '~/types/finance'
 import type { SyncPhase } from '~/types/firebase'
 
 const { readingHistory, saveBook, updateStatus, deleteBook } = useReadingArchive()
-const { budgetEntries, currentBalance, saveEntry, deleteEntry } = useBudgetArchive()
+const { budgetEntries, startBalance, saveEntry, deleteEntry } = useBudgetArchive()
 const { user, authReady, authPending, authError, loginWithGoogle, logout } = useFirebaseSession()
 const {
   isCloudConfigured,
@@ -35,6 +36,7 @@ const budgetModalOpen = ref(false)
 const financeModalOpen = ref(false)
 const currency = new Intl.NumberFormat('ko-KR')
 const balanceInput = ref('0')
+const formatWonAmount = (value: number) => currency.format(value)
 
 const latestBudgetDate = computed(() => {
   const sorted = [...budgetEntries.value].sort((a, b) => b.spentAt.localeCompare(a.spentAt))
@@ -96,6 +98,7 @@ const toastTone = ref<'success' | 'error'>('success')
 const showToast = ref(false)
 const readingValidationActive = ref(false)
 const budgetValidationActive = ref(false)
+const initialArchiveLoading = ref(false)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 const totalBooks = computed(() => readingHistory.value.length)
@@ -136,7 +139,6 @@ const totalIncome = computed(() =>
     .reduce((sum, entry) => sum + entry.amount, 0)
 )
 
-const balance = computed(() => currentBalance.value + totalIncome.value - totalExpense.value)
 const availableBudgetYears = computed(() => {
   const years = Array.from(new Set(budgetEntries.value.map((entry) => Number(entry.spentAt.slice(0, 4)))))
     .sort((a, b) => a - b)
@@ -195,9 +197,14 @@ const previousMonthExpense = computed(() =>
 const previousMonthNet = computed(() => previousMonthIncome.value - previousMonthExpense.value)
 
 const monthDelta = (current: number, previous: number) => current - previous
+const deltaTrend = (current: number, previous: number) => {
+  const delta = monthDelta(current, previous)
+  if (delta === 0) return 'flat'
+  return delta > 0 ? 'up' : 'down'
+}
 
 const monthlyBudgetRows = computed(() => {
-  let cumulative = currentBalance.value
+  let cumulative = startBalance.value
 
   return Array.from({ length: 12 }, (_, index) => {
     const month = index + 1
@@ -221,7 +228,7 @@ const monthlyBudgetRows = computed(() => {
 })
 
 const monthCumulativeBalance = computed(
-  () => monthlyBudgetRows.value.find((row) => row.month === budgetReferenceMonth.value)?.cumulative ?? currentBalance.value
+  () => monthlyBudgetRows.value.find((row) => row.month === budgetReferenceMonth.value)?.cumulative ?? startBalance.value
 )
 
 const topExpenseCategories = computed(() => {
@@ -337,9 +344,33 @@ const budgetChartMax = computed(() => {
   return maxValue || 1
 })
 
-const cumulativeChartMax = computed(() => {
-  const maxValue = Math.max(...monthlyBudgetRows.value.map((row) => row.cumulative), 0)
-  return maxValue || 1
+const budgetChartTooltip = (label: string, kind: 'income' | 'expense' | 'cumulative', amount: number) => {
+  const kindLabel = kind === 'income' ? '수입' : kind === 'expense' ? '지출' : '누적잔액'
+  return `${label} ${kindLabel}: ${currency.format(amount)}원`
+}
+
+const cumulativeChartBounds = computed(() => {
+  const values = monthlyBudgetRows.value.map((row) => row.cumulative)
+
+  if (!values.length) {
+    return { min: 0, max: 1, range: 1 }
+  }
+
+  const rawMin = Math.min(...values)
+  const rawMax = Math.max(...values)
+  const midpoint = (rawMin + rawMax) / 2
+  const halfSpread = Math.max((rawMax - rawMin) / 2, 0)
+  const padding = halfSpread === 0
+    ? Math.max(Math.abs(midpoint) * 0.08, 300_000)
+    : Math.max(halfSpread * 0.9, 300_000)
+  const min = midpoint - (halfSpread + padding)
+  const max = midpoint + (halfSpread + padding)
+
+  return {
+    min,
+    max,
+    range: max - min || 1
+  }
 })
 
 const comboChartInnerWidth = 708
@@ -351,7 +382,7 @@ const cumulativePolylinePoints = computed(() => {
   return monthlyBudgetRows.value
     .map((row, index) => {
       const x = 36 + index * 56 + 28
-      const y = comboChartBottom - (row.cumulative / cumulativeChartMax.value) * comboChartInnerHeight
+      const y = comboChartBottom - ((row.cumulative - cumulativeChartBounds.value.min) / cumulativeChartBounds.value.range) * comboChartInnerHeight
       return `${x},${Number(y.toFixed(2))}`
     })
     .join(' ')
@@ -361,7 +392,7 @@ const cumulativePointPositions = computed(() =>
   monthlyBudgetRows.value.map((row, index) => ({
     month: row.month,
     x: 36 + index * 56 + 28,
-    y: comboChartBottom - (row.cumulative / cumulativeChartMax.value) * comboChartInnerHeight,
+    y: comboChartBottom - ((row.cumulative - cumulativeChartBounds.value.min) / cumulativeChartBounds.value.range) * comboChartInnerHeight,
     value: row.cumulative
   }))
 )
@@ -378,7 +409,7 @@ const comboLeftAxisTicks = computed(() =>
 
 const comboRightAxisTicks = computed(() =>
   Array.from({ length: 6 }, (_, index) => {
-    const value = (cumulativeChartMax.value / 5) * (5 - index)
+    const value = cumulativeChartBounds.value.max - (cumulativeChartBounds.value.range / 5) * index
     return {
       label: currency.format(Math.round(value)),
       top: `${(index / 5) * 100}%`
@@ -443,6 +474,7 @@ const isWorkingState = (state: SyncPhase) =>
 const readingBusy = computed(() => isWorkingState(readingSyncState.value))
 const budgetBusy = computed(() => isWorkingState(budgetSyncState.value))
 const financeBusy = computed(() => isWorkingState(financeSyncState.value))
+const showInitialLoader = computed(() => authReady.value && Boolean(user.value) && initialArchiveLoading.value)
 
 const openToast = (message: string, tone: 'success' | 'error' = 'success') => {
   toastMessage.value = message
@@ -466,7 +498,7 @@ const toggleActiveTab = () => {
 const resetAllData = () => {
   readingHistory.value = []
   budgetEntries.value = []
-  currentBalance.value = 0
+  startBalance.value = 0
   readingModalOpen.value = false
   budgetModalOpen.value = false
   financeModalOpen.value = false
@@ -801,14 +833,14 @@ const submitBudgetForm = async () => {
 }
 
 const syncBalanceInput = () => {
-  balanceInput.value = String(currentBalance.value)
+  balanceInput.value = String(startBalance.value)
 }
 
 const persistFinance = async () => {
   if (!isCloudConfigured.value || !isAuthenticated.value) return false
-  const saved = await saveFinanceSummary(currentBalance.value)
+  const saved = await saveFinanceSummary(startBalance.value)
   if (saved) {
-    openToast('현재 잔고가 저장되었습니다.')
+    openToast('시작잔고가 저장되었습니다.')
     return true
   } else if (financeSyncError.value) {
     openToast(`저장 실패: ${financeSyncError.value}`, 'error')
@@ -822,24 +854,24 @@ const refreshFinance = async (notify = true) => {
   const snapshot = await fetchFinanceSummary('refreshing')
 
   if (snapshot) {
-    currentBalance.value = snapshot.currentBalance
+    startBalance.value = snapshot.startBalance
     syncBalanceInput()
     if (notify) {
-      openToast('현재 잔고를 새로고침했습니다.')
+      openToast('시작잔고를 새로고침했습니다.')
     }
     return
   }
 
   if (!financeSyncError.value) {
-    const saved = await saveFinanceSummary(currentBalance.value)
+    const saved = await saveFinanceSummary(startBalance.value)
     if (saved) {
-      openToast('현재 잔고가 저장되었습니다.')
+      openToast('시작잔고가 저장되었습니다.')
     }
   }
 }
 
 const submitBalance = async () => {
-  currentBalance.value = Number(balanceInput.value) || 0
+  startBalance.value = Number(balanceInput.value) || 0
   await persistFinance()
   financeModalOpen.value = false
 }
@@ -848,7 +880,7 @@ onMounted(() => {
   syncBalanceInput()
 })
 
-watch(currentBalance, () => {
+watch(startBalance, () => {
   syncBalanceInput()
 })
 
@@ -916,9 +948,9 @@ onMounted(async () => {
 
   const financeSnapshot = await fetchFinanceSummary()
   if (financeSnapshot) {
-    currentBalance.value = financeSnapshot.currentBalance
+    startBalance.value = financeSnapshot.startBalance
   } else if (!financeSyncError.value) {
-    await saveFinanceSummary(currentBalance.value)
+    await saveFinanceSummary(startBalance.value)
   }
 
   syncBalanceInput()
@@ -935,9 +967,17 @@ watch(
       return
     }
 
-    await refreshReading(false)
-    await refreshBudget(false)
-    await refreshFinance(false)
+    initialArchiveLoading.value = true
+
+    try {
+      await Promise.all([
+        refreshReading(false),
+        refreshBudget(false),
+        refreshFinance(false)
+      ])
+    } finally {
+      initialArchiveLoading.value = false
+    }
   },
   { immediate: true }
 )
@@ -995,10 +1035,15 @@ watch(
 
     <section v-if="authReady && !user" class="budget-panel auth-empty">
       <h2>로그인이 필요합니다</h2>
-      <p>구글 로그인 후 내 계정 기준으로 독서 기록, 가계부, 현재 잔고가 따로 저장됩니다.</p>
+      <p>구글 로그인 후 내 계정 기준으로 독서 기록, 가계부, 시작잔고가 따로 저장됩니다.</p>
     </section>
 
-    <div v-if="user && activeTab === 'reading'" class="archive-stats">
+    <section v-else-if="showInitialLoader" class="center-loader" aria-live="polite" aria-busy="true">
+      <span class="center-loader__spinner" aria-hidden="true" />
+      <p>아카이브를 불러오는 중...</p>
+    </section>
+
+    <div v-else-if="user && activeTab === 'reading'" class="archive-stats">
       <article class="stat-card">
         <p>전체 도서</p>
         <strong>{{ totalBooks }}</strong>
@@ -1049,9 +1094,8 @@ watch(
           </div>
 
           <div class="archive-controls__actions budget-dashboard__actions">
-            <button type="button" class="ghost-button" @click="openFinanceModal">잔고 관리</button>
             <button type="button" class="ghost-button icon-button" aria-label="가계부 기록 새로고침" title="새로고침" @click="refreshBudget">
-              <span class="refresh-icon" aria-hidden="true" />
+              <RefreshCw aria-hidden="true" />
             </button>
             <button type="button" class="primary-button" @click="openBudgetModal">가계부 추가</button>
           </div>
@@ -1059,43 +1103,90 @@ watch(
 
         <div class="budget-dashboard__metrics">
           <article class="metric-card">
-            <p>현재 잔고</p>
-            <strong>{{ currency.format(currentBalance) }}원</strong>
+            <div class="metric-card__head metric-card__head--inline">
+              <p>시작잔고</p>
+              <button
+                type="button"
+                class="metric-card__action"
+                aria-label="시작잔고 관리"
+                title="시작잔고 관리"
+                @click="openFinanceModal"
+              >
+                <Settings class="gear-icon" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="metric-card__value-line metric-card__value-line--single">
+              <strong class="metric-card__amount">
+                <span class="metric-card__amount-value">{{ formatWonAmount(startBalance) }}</span>
+                <span class="metric-card__amount-unit">원</span>
+              </strong>
+            </div>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 수입</p>
-            <strong>{{ currency.format(monthIncome) }}원</strong>
-            <small
-              class="metric-card__delta"
-              :data-trend="monthDelta(monthIncome, previousMonthIncome) >= 0 ? 'up' : 'down'"
-            >
-              {{ monthDelta(monthIncome, previousMonthIncome) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthIncome, previousMonthIncome))) }}
-            </small>
+            <div class="metric-card__value-line">
+              <strong class="metric-card__amount">
+                <span class="metric-card__amount-value">{{ formatWonAmount(monthIncome) }}</span>
+                <span class="metric-card__amount-unit">원</span>
+              </strong>
+              <small
+                class="metric-card__delta"
+                :data-trend="deltaTrend(monthIncome, previousMonthIncome)"
+              >
+                {{
+                  monthDelta(monthIncome, previousMonthIncome) === 0
+                    ? '-'
+                    : `${monthDelta(monthIncome, previousMonthIncome) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthIncome, previousMonthIncome)))}`
+                }}
+              </small>
+            </div>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 지출</p>
-            <strong>{{ currency.format(monthExpense) }}원</strong>
-            <small
-              class="metric-card__delta"
-              :data-trend="monthDelta(monthExpense, previousMonthExpense) >= 0 ? 'up' : 'down'"
-            >
-              {{ monthDelta(monthExpense, previousMonthExpense) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthExpense, previousMonthExpense))) }}
-            </small>
+            <div class="metric-card__value-line">
+              <strong class="metric-card__amount">
+                <span class="metric-card__amount-value">{{ formatWonAmount(monthExpense) }}</span>
+                <span class="metric-card__amount-unit">원</span>
+              </strong>
+              <small
+                class="metric-card__delta"
+                :data-trend="deltaTrend(monthExpense, previousMonthExpense)"
+              >
+                {{
+                  monthDelta(monthExpense, previousMonthExpense) === 0
+                    ? '-'
+                    : `${monthDelta(monthExpense, previousMonthExpense) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthExpense, previousMonthExpense)))}`
+                }}
+              </small>
+            </div>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 수입-지출</p>
-            <strong>{{ currency.format(monthNet) }}원</strong>
-            <small
-              class="metric-card__delta"
-              :data-trend="monthDelta(monthNet, previousMonthNet) >= 0 ? 'up' : 'down'"
-            >
-              {{ monthDelta(monthNet, previousMonthNet) >= 0 ? '▲' : '▼' }} {{ currency.format(Math.abs(monthDelta(monthNet, previousMonthNet))) }}
-            </small>
+            <div class="metric-card__value-line">
+              <strong class="metric-card__amount">
+                <span class="metric-card__amount-value">{{ formatWonAmount(monthNet) }}</span>
+                <span class="metric-card__amount-unit">원</span>
+              </strong>
+              <small
+                class="metric-card__delta"
+                :data-trend="deltaTrend(monthNet, previousMonthNet)"
+              >
+                {{
+                  monthDelta(monthNet, previousMonthNet) === 0
+                    ? '-'
+                    : `${monthDelta(monthNet, previousMonthNet) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthNet, previousMonthNet)))}`
+                }}
+              </small>
+            </div>
           </article>
           <article class="metric-card">
             <p>{{ budgetReferenceMonth }}월 누적잔액</p>
-            <strong>{{ currency.format(monthCumulativeBalance) }}원</strong>
-            <small>{{ budgetReferenceYear }}년 누적 기준</small>
+            <div class="metric-card__value-line">
+              <strong class="metric-card__amount">
+                <span class="metric-card__amount-value">{{ formatWonAmount(monthCumulativeBalance) }}</span>
+                <span class="metric-card__amount-unit">원</span>
+              </strong>
+            </div>
           </article>
         </div>
       </div>
@@ -1124,7 +1215,7 @@ watch(
                   <td>{{ currency.format(monthlyBudgetRows.reduce((sum, row) => sum + row.expense, 0)) }}</td>
                 </tr>
                 <tr>
-                  <th>누적잔액</th>
+                  <th>누적 잔액</th>
                   <td v-for="row in monthlyBudgetRows" :key="`balance-${row.month}`">{{ currency.format(row.cumulative) }}</td>
                   <td>{{ currency.format(monthlyBudgetRows.at(-1)?.cumulative ?? 0) }}</td>
                 </tr>
@@ -1168,10 +1259,14 @@ watch(
                         <div
                           class="combo-chart__column combo-chart__column--income"
                           :style="{ height: `${(item.income / budgetChartMax) * 100}%` }"
+                          :title="budgetChartTooltip(item.label, 'income', item.income)"
+                          aria-label="월별 수입"
                         />
                         <div
                           class="combo-chart__column combo-chart__column--expense"
                           :style="{ height: `${(item.expense / budgetChartMax) * 100}%` }"
+                          :title="budgetChartTooltip(item.label, 'expense', item.expense)"
+                          aria-label="월별 지출"
                         />
                       </div>
                       <span class="combo-chart__month-label">{{ item.label }}</span>
@@ -1187,14 +1282,19 @@ watch(
                       class="combo-chart__line"
                       :points="cumulativePolylinePoints"
                     />
-                    <circle
+                    <g
                       v-for="point in cumulativePointPositions"
                       :key="`point-${point.month}`"
-                      class="combo-chart__point"
-                      :cx="point.x"
-                      :cy="point.y"
-                      r="4"
-                    />
+                      class="combo-chart__point-wrap"
+                    >
+                      <title>{{ budgetChartTooltip(`${point.month}월`, 'cumulative', point.value) }}</title>
+                      <circle
+                        class="combo-chart__point"
+                        :cx="point.x"
+                        :cy="point.y"
+                        r="4"
+                      />
+                    </g>
                   </svg>
                 </div>
               </div>
@@ -1219,7 +1319,7 @@ watch(
             <div class="donut-card__chart" :style="incomeDonutStyle">
               <div class="donut-card__inner">{{ currency.format(monthIncome) }}</div>
             </div>
-            <div class="donut-card__legend">
+            <div v-if="incomeDonutSegments.length" class="donut-card__legend">
               <div
                 v-for="segment in incomeDonutSegments"
                 :key="`income-${segment.category}`"
@@ -1230,12 +1330,13 @@ watch(
                 <strong>{{ currency.format(segment.amount) }}</strong>
               </div>
             </div>
+            <p v-else class="budget-panel__empty">항목이 없습니다.</p>
           </div>
         </section>
 
         <section class="budget-panel budget-panel--treemap">
           <h2>{{ budgetReferenceMonth }}월 지출금액</h2>
-          <div class="treemap">
+          <div v-if="expenseTreemap.length" class="treemap">
             <div
               v-for="tile in expenseTreemap"
               :key="`tile-${tile.category}`"
@@ -1246,11 +1347,12 @@ watch(
               <strong>{{ currency.format(tile.amount) }}</strong>
             </div>
           </div>
+          <p v-else class="budget-panel__empty">항목이 없습니다.</p>
         </section>
 
         <section class="budget-panel budget-panel--categories">
           <h2>{{ budgetReferenceMonth }}월 많이 소비한 항목</h2>
-          <div class="category-bars">
+          <div v-if="topExpenseCategoriesLarge.length" class="category-bars">
             <div
               v-for="item in topExpenseCategoriesLarge"
               :key="`large-${item.category}`"
@@ -1266,6 +1368,7 @@ watch(
               <strong>{{ currency.format(item.amount) }}</strong>
             </div>
           </div>
+          <p v-else class="budget-panel__empty">항목이 없습니다.</p>
         </section>
       </div>
     </section>
@@ -1284,13 +1387,13 @@ watch(
           </label>
           <div class="archive-controls__actions">
             <button type="button" class="ghost-button icon-button" aria-label="독서 기록 새로고침" title="새로고침" @click="refreshReading">
-              <span class="refresh-icon" aria-hidden="true" />
+              <RefreshCw aria-hidden="true" />
             </button>
             <button type="button" class="primary-button" @click="openReadingModal">독서 기록 추가</button>
           </div>
         </div>
 
-        <div class="book-grid">
+        <div v-if="filteredBooks.length" class="book-grid">
           <BookCard
             v-for="book in filteredBooks"
             :key="book.id"
@@ -1300,6 +1403,7 @@ watch(
             @delete="handleDeleteBook"
           />
         </div>
+        <p v-else class="archive-list__empty">도서 목록이 없습니다.</p>
       </section>
     </div>
 
@@ -1319,6 +1423,11 @@ watch(
 
     <div v-if="readingModalOpen" class="modal-backdrop" role="presentation" @click.self="closeReadingModal">
       <section class="entry-panel modal-panel" role="dialog" aria-modal="true" aria-labelledby="reading-modal-title">
+        <div v-if="readingBusy" class="modal-loader" aria-live="polite" aria-busy="true">
+          <span class="modal-loader__spinner" aria-hidden="true" />
+          <p>독서 기록 동기화 중...</p>
+        </div>
+
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Archive Editor</p>
@@ -1328,10 +1437,6 @@ watch(
             <button v-if="editingId" type="button" class="ghost-button" @click="resetForm">새로 입력</button>
             <button type="button" class="ghost-button" @click="closeReadingModal">닫기</button>
           </div>
-        </div>
-
-        <div v-if="readingBusy" class="sync-progress" aria-hidden="true">
-          <span class="sync-progress__bar" />
         </div>
 
         <form class="entry-form" novalidate @submit.prevent="submitForm">
@@ -1396,8 +1501,7 @@ watch(
             <button type="submit" class="primary-button">
               {{ editingId ? '기록 저장' : '아카이브에 추가' }}
             </button>
-            <p v-if="readingBusy" class="entry-form__hint">독서 기록 동기화 중...</p>
-            <p v-else-if="readingSyncError" class="entry-form__hint">Firebase 오류: {{ readingSyncError }}</p>
+            <p v-if="readingSyncError" class="entry-form__hint">Firebase 오류: {{ readingSyncError }}</p>
           </div>
         </form>
       </section>
@@ -1405,35 +1509,35 @@ watch(
 
     <div v-if="financeModalOpen" class="modal-backdrop" role="presentation" @click.self="financeModalOpen = false">
       <section class="entry-panel modal-panel modal-panel--small" role="dialog" aria-modal="true" aria-labelledby="finance-modal-title">
+        <div v-if="financeBusy" class="modal-loader" aria-live="polite" aria-busy="true">
+          <span class="modal-loader__spinner" aria-hidden="true" />
+          <p>잔고 동기화 중...</p>
+        </div>
+
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Balance</p>
-            <h2 id="finance-modal-title">현재 잔고 관리</h2>
+            <h2 id="finance-modal-title">시작잔고 관리</h2>
           </div>
           <div class="entry-panel__actions">
-            <button type="button" class="ghost-button icon-button" aria-label="현재 잔고 새로고침" title="새로고침" @click="refreshFinance">
-              <span class="refresh-icon" aria-hidden="true" />
+            <button type="button" class="ghost-button icon-button" aria-label="시작잔고 새로고침" title="새로고침" @click="refreshFinance">
+              <RefreshCw aria-hidden="true" />
             </button>
             <button type="button" class="ghost-button" @click="financeModalOpen = false">닫기</button>
           </div>
         </div>
 
-        <div v-if="financeBusy" class="sync-progress" aria-hidden="true">
-          <span class="sync-progress__bar" />
-        </div>
-
         <form class="entry-form" novalidate @submit.prevent="submitBalance">
           <div class="entry-form__grid">
             <label class="field">
-              <span>현재 잔고</span>
+              <span>시작잔고</span>
               <input v-model="balanceInput" type="number" step="1000" placeholder="0">
             </label>
           </div>
 
           <div class="entry-form__actions">
-            <button type="submit" class="primary-button">잔고 저장</button>
-            <p v-if="financeBusy" class="entry-form__hint">잔고 동기화 중...</p>
-            <p v-else-if="financeSyncError" class="entry-form__hint">Firebase 오류: {{ financeSyncError }}</p>
+            <button type="submit" class="primary-button">시작잔고 저장</button>
+            <p v-if="financeSyncError" class="entry-form__hint">Firebase 오류: {{ financeSyncError }}</p>
           </div>
         </form>
       </section>
@@ -1441,6 +1545,11 @@ watch(
 
     <div v-if="budgetModalOpen" class="modal-backdrop" role="presentation" @click.self="closeBudgetModal">
       <section class="entry-panel modal-panel" role="dialog" aria-modal="true" aria-labelledby="budget-modal-title">
+        <div v-if="budgetBusy" class="modal-loader" aria-live="polite" aria-busy="true">
+          <span class="modal-loader__spinner" aria-hidden="true" />
+          <p>가계부 동기화 중...</p>
+        </div>
+
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Budget Editor</p>
@@ -1450,10 +1559,6 @@ watch(
             <button v-if="budgetEditingId" type="button" class="ghost-button" @click="resetBudgetForm">새로 입력</button>
             <button type="button" class="ghost-button" @click="closeBudgetModal">닫기</button>
           </div>
-        </div>
-
-        <div v-if="budgetBusy" class="sync-progress" aria-hidden="true">
-          <span class="sync-progress__bar" />
         </div>
 
         <form class="entry-form" novalidate @submit.prevent="submitBudgetForm">
@@ -1515,8 +1620,7 @@ watch(
             <button type="submit" class="primary-button">
               {{ budgetEditingId ? '항목 저장' : '가계부에 추가' }}
             </button>
-            <p v-if="budgetBusy" class="entry-form__hint">가계부 동기화 중...</p>
-            <p v-else-if="budgetSyncError" class="entry-form__hint">Firebase 오류: {{ budgetSyncError }}</p>
+            <p v-if="budgetSyncError" class="entry-form__hint">Firebase 오류: {{ budgetSyncError }}</p>
           </div>
         </form>
       </section>
