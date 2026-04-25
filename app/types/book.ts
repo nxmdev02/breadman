@@ -5,6 +5,8 @@ export interface BookEntry {
   createdAt: string
   title: string
   author?: string
+  summary?: string
+  coverImage?: string
   genre: string
   startedAt: string
   finishedAt?: string

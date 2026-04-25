@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-vue-next'
 import type { BookEntry, ReadingStatus } from '~/types/book'
 import type { BudgetEntry, BudgetKind } from '~/types/finance'
 import type { SyncPhase } from '~/types/firebase'
@@ -29,6 +29,11 @@ const query = ref('')
 const selectedStatus = ref<'all' | 'finished' | 'reading' | 'paused'>('all')
 const editingId = ref<number | null>(null)
 const readingModalOpen = ref(false)
+const reviewModalOpen = ref(false)
+const reviewBookId = ref<number | null>(null)
+const reviewDraft = ref('')
+const coverLookupPending = ref(false)
+const coverLookupError = ref('')
 const budgetQuery = ref('')
 const budgetKindFilter = ref<'all' | BudgetKind>('all')
 const budgetEditingId = ref<number | null>(null)
@@ -50,6 +55,8 @@ const emptyForm = () => ({
   genre: '소설',
   title: '',
   author: '',
+  summary: '',
+  coverImage: '',
   startedAt: '',
   finishedAt: '',
   rating: '',
@@ -83,7 +90,7 @@ const budgetErrors = reactive({
   spentAt: ''
 })
 const expenseTitleOptions = ['식비', '카페', '교통비', '주거비', '쇼핑', '생활용품', '의료비', '문화생활', '통신비', '기타']
-const incomeTitleOptions = ['월급', '상여', '용돈', '환급', '이자', '부수입', '기타']
+const incomeTitleOptions = ['월급', '상여', '수당', '용돈', '환급', '이자', '부수입', '기타']
 const expenseCategoryOptions = ['생활비', '식비', '교통', '주거', '쇼핑', '건강', '문화', '고정지출', '기타']
 const incomeCategoryOptions = ['고정수입', '보너스', '금융수입', '부수입', '기타']
 const paymentMethodOptions = ['카드', '현금', '계좌이체', '간편결제', '자동이체', '기타']
@@ -117,7 +124,197 @@ const averageRatingStars = computed(() => {
   return `${'★'.repeat(roundedRating)}${'☆'.repeat(5 - roundedRating)}`
 })
 
+const readFileAsDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+
+const handleCoverPaste = async (event: ClipboardEvent) => {
+  const clipboardItems = event.clipboardData?.items
+  if (!clipboardItems?.length) return
+
+  const imageItem = Array.from(clipboardItems).find((item) => item.type.startsWith('image/'))
+
+  if (imageItem) {
+    event.preventDefault()
+    const file = imageItem.getAsFile()
+    if (!file) return
+    form.coverImage = await readFileAsDataUrl(file)
+    return
+  }
+
+  const text = event.clipboardData?.getData('text/plain')?.trim()
+  if (text) {
+    event.preventDefault()
+    form.coverImage = text
+  }
+}
+
+const lookupBookCover = async () => {
+  if (!form.title.trim()) {
+    coverLookupError.value = '먼저 책 제목을 입력해주세요.'
+    return
+  }
+
+  coverLookupPending.value = true
+  coverLookupError.value = ''
+
+  try {
+    const result = await $fetch<{ image: string | null }>('/api/books/cover', {
+      query: {
+        title: form.title.trim(),
+        author: form.author.trim() || undefined
+      }
+    })
+
+    if (!result.image) {
+      coverLookupError.value = '일치하는 표지를 찾지 못했습니다.'
+      return
+    }
+
+    form.coverImage = result.image
+  } catch {
+    coverLookupError.value = '표지를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.'
+  } finally {
+    coverLookupPending.value = false
+  }
+}
+
+const fetchBookMetadata = async () => {
+  if (!form.title.trim()) return null
+
+  try {
+    return await $fetch<{
+      authors: string[]
+      image: string | null
+      title: string | null
+    }>('/api/books/cover', {
+      query: {
+        title: form.title.trim(),
+        author: form.author.trim() || undefined
+      }
+    })
+  } catch {
+    return null
+  }
+}
+
 const getTodayDate = () => new Date().toISOString().slice(0, 10)
+const readingWeekdayLabels = ['일', '월', '화', '수', '목', '금', '토']
+const readingMonthLabels = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
+
+const parseDateParts = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number)
+  return { year, month, day }
+}
+
+const createDateKey = (year: number, month: number, day: number) =>
+  `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+const createDateFromKey = (value: string) => {
+  const { year, month, day } = parseDateParts(value)
+  return new Date(year, month - 1, day)
+}
+
+const createMonthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`
+
+const shiftMonthKey = (monthKey: string, amount: number) => {
+  const [year, month] = monthKey.split('-').map(Number)
+  const shifted = new Date(year, month - 1 + amount, 1)
+  return createMonthKey(shifted.getFullYear(), shifted.getMonth() + 1)
+}
+
+const readingCalendarBooks = computed(() =>
+  readingHistory.value
+    .filter((book) => book.startedAt && (book.status === 'finished' || book.status === 'reading'))
+    .map((book) => {
+      const rawEnd = book.status === 'reading' ? getTodayDate() : book.finishedAt || book.startedAt
+      const startKey = book.startedAt <= rawEnd ? book.startedAt : rawEnd
+      const endKey = book.startedAt <= rawEnd ? rawEnd : book.startedAt
+
+      return {
+        ...book,
+        endKey,
+        startKey,
+        displayEnd: rawEnd
+      }
+    })
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'reading' ? -1 : 1
+      return a.startKey.localeCompare(b.startKey)
+    })
+)
+
+const readingCalendarSummary = computed(() => {
+  const readingCount = readingCalendarBooks.value.filter((book) => book.status === 'reading').length
+  const finishedCount = readingCalendarBooks.value.filter((book) => book.status === 'finished').length
+  return `읽는 중 ${readingCount}권 · 완독 ${finishedCount}권`
+})
+
+const readingCalendarBounds = computed(() => {
+  const fallbackMonth = getTodayDate().slice(0, 7)
+  if (!readingCalendarBooks.value.length) {
+    return { min: fallbackMonth, max: fallbackMonth }
+  }
+
+  const sortedStarts = readingCalendarBooks.value.map((book) => book.startKey.slice(0, 7)).sort()
+  const sortedEnds = readingCalendarBooks.value.map((book) => book.endKey.slice(0, 7)).sort()
+
+  return {
+    min: sortedStarts[0] ?? fallbackMonth,
+    max: sortedEnds.at(-1) ?? fallbackMonth
+  }
+})
+
+const readingCalendarMonthKey = ref(getTodayDate().slice(0, 7))
+
+const readingCalendarMonth = computed(() => {
+  const todayKey = getTodayDate()
+  const [year, month] = readingCalendarMonthKey.value.split('-').map(Number)
+  const firstDay = new Date(year, month - 1, 1)
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const leadingBlankCount = firstDay.getDay()
+  const trailingBlankCount = (7 - ((leadingBlankCount + daysInMonth) % 7 || 7)) % 7
+
+  const dayCells = Array.from({ length: daysInMonth }, (_, dayIndex) => {
+    const dateKey = createDateKey(year, month, dayIndex + 1)
+    const activeBooks = readingCalendarBooks.value
+      .filter((book) => book.startKey <= dateKey && book.endKey >= dateKey)
+      .sort((a, b) => {
+        if (a.status !== b.status) return a.status === 'reading' ? -1 : 1
+        return a.startKey.localeCompare(b.startKey)
+      })
+
+    return {
+      activeBooks,
+      dateKey,
+      day: dayIndex + 1,
+      isToday: dateKey === todayKey,
+      visibleBooks: activeBooks.slice(0, 2)
+    }
+  })
+
+  return {
+    canGoNext: readingCalendarMonthKey.value < readingCalendarBounds.value.max,
+    canGoPrev: readingCalendarMonthKey.value > readingCalendarBounds.value.min,
+    days: [
+      ...Array.from({ length: leadingBlankCount }, (_, index) => ({ id: `blank-start-${index}` })),
+      ...dayCells,
+      ...Array.from({ length: trailingBlankCount }, (_, index) => ({ id: `blank-end-${index}` }))
+    ],
+    month,
+    title: `${year}년 ${readingMonthLabels[month - 1]}`
+  }
+})
+
+const moveReadingCalendarMonth = (direction: -1 | 1) => {
+  const nextMonthKey = shiftMonthKey(readingCalendarMonthKey.value, direction)
+  if (nextMonthKey < readingCalendarBounds.value.min || nextMonthKey > readingCalendarBounds.value.max) return
+  readingCalendarMonthKey.value = nextMonthKey
+}
 
 const currentReadingTitle = computed(() => {
   const currentBook = readingHistory.value
@@ -629,7 +826,27 @@ const openReadingModal = () => {
 
 const closeReadingModal = () => {
   readingModalOpen.value = false
+  coverLookupPending.value = false
+  coverLookupError.value = ''
   resetForm()
+}
+
+const selectedReviewBook = computed(() =>
+  reviewBookId.value ? readingHistory.value.find((book) => book.id === reviewBookId.value) ?? null : null
+)
+
+const openReviewModal = (id: number) => {
+  const target = readingHistory.value.find((book) => book.id === id)
+  if (!target) return
+  reviewBookId.value = id
+  reviewDraft.value = target.memo ?? ''
+  reviewModalOpen.value = true
+}
+
+const closeReviewModal = () => {
+  reviewModalOpen.value = false
+  reviewBookId.value = null
+  reviewDraft.value = ''
 }
 
 const startEditing = (id: number) => {
@@ -641,6 +858,8 @@ const startEditing = (id: number) => {
     genre: target.genre,
     title: target.title,
     author: target.author ?? '',
+    summary: target.summary ?? '',
+    coverImage: target.coverImage ?? '',
     startedAt: target.startedAt,
     finishedAt: target.finishedAt ?? '',
     rating: target.rating ? String(target.rating) : '',
@@ -697,6 +916,7 @@ const submitForm = async () => {
   readingValidationActive.value = true
   if (!validateReadingForm()) return
   const startedAt = form.startedAt || getTodayDate()
+  const matchedBook = await fetchBookMetadata()
 
   const existingEntry = editingId.value
     ? readingHistory.value.find((book) => book.id === editingId.value)
@@ -706,8 +926,10 @@ const submitForm = async () => {
     id: editingId.value ?? undefined,
     createdAt: existingEntry?.createdAt ?? new Date().toISOString(),
     genre: form.genre,
-    title: form.title,
-    author: form.author || undefined,
+    title: matchedBook?.title || form.title,
+    author: form.author || matchedBook?.authors?.[0] || undefined,
+    summary: form.summary.trim() || undefined,
+    coverImage: form.coverImage.trim() || matchedBook?.image || undefined,
     startedAt,
     finishedAt: form.finishedAt || undefined,
     rating: form.rating ? Number(form.rating) : undefined,
@@ -727,6 +949,9 @@ const handleStatusChange = async ({ id, status }: { id: number; status: BookEntr
 
 const handleDeleteBook = async (id: number) => {
   const previousItems = [...readingHistory.value]
+  if (reviewBookId.value === id) {
+    closeReviewModal()
+  }
   deleteBook(id)
 
   if (!isCloudConfigured.value || !isAuthenticated.value) return
@@ -744,6 +969,19 @@ const handleDeleteBook = async (id: number) => {
 
   await refreshReading()
   openToast('독서 기록이 삭제되었습니다.')
+}
+
+const saveReview = async () => {
+  const target = selectedReviewBook.value
+  if (!target) return
+
+  saveBook({
+    ...target,
+    memo: reviewDraft.value.trim()
+  })
+
+  closeReviewModal()
+  await persistReading()
 }
 
 const resetBudgetForm = () => {
@@ -917,6 +1155,16 @@ onMounted(() => {
 watch(startBalance, () => {
   syncBalanceInput()
 })
+
+watch(
+  readingCalendarBounds,
+  (bounds) => {
+    if (readingCalendarMonthKey.value < bounds.min || readingCalendarMonthKey.value > bounds.max) {
+      readingCalendarMonthKey.value = bounds.max
+    }
+  },
+  { immediate: true }
+)
 
 watch(
   () => budgetForm.kind,
@@ -1355,11 +1603,88 @@ watch(
             :key="book.id"
             :book="book"
             @edit="startEditing"
+            @review="openReviewModal"
             @status-change="handleStatusChange"
             @delete="handleDeleteBook"
           />
         </div>
         <p v-else class="archive-list__empty">{{ readingEmptyMessage }}</p>
+
+        <section class="reading-calendar">
+          <div class="reading-calendar__head">
+            <div>
+              <p class="reading-calendar__eyebrow">Reading Calendar</p>
+              <h2>읽은 기간 캘린더</h2>
+              <p class="reading-calendar__description">
+                일반 달력처럼 한 달씩 넘기면서 시작일부터 완료일 또는 오늘까지의 독서 기간을 볼 수 있습니다.
+              </p>
+            </div>
+            <p class="reading-calendar__summary">{{ readingCalendarSummary }}</p>
+          </div>
+
+          <div v-if="readingCalendarBooks.length" class="reading-calendar__legend">
+            <span><i data-status="reading" />읽는 중은 오늘까지 표시</span>
+            <span><i data-status="finished" />완독은 완료일까지 표시</span>
+          </div>
+
+          <article v-if="readingCalendarBooks.length" class="reading-month">
+            <header class="reading-month__header">
+              <button
+                type="button"
+                class="ghost-button icon-button"
+                aria-label="이전 달"
+                :disabled="!readingCalendarMonth.canGoPrev"
+                @click="moveReadingCalendarMonth(-1)"
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <h3>{{ readingCalendarMonth.title }}</h3>
+              <button
+                type="button"
+                class="ghost-button icon-button"
+                aria-label="다음 달"
+                :disabled="!readingCalendarMonth.canGoNext"
+                @click="moveReadingCalendarMonth(1)"
+              >
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </header>
+            <div class="reading-month__weekdays">
+              <span v-for="weekday in readingWeekdayLabels" :key="weekday">{{ weekday }}</span>
+            </div>
+            <div class="reading-month__grid">
+              <div
+                v-for="day in readingCalendarMonth.days"
+                :key="day.id ?? day.dateKey"
+                class="reading-day"
+                :class="{
+                  'reading-day--blank': !day.dateKey,
+                  'reading-day--today': day.isToday,
+                  'reading-day--active': day.activeBooks?.length
+                }"
+              >
+                <template v-if="day.dateKey">
+                  <span class="reading-day__date">{{ day.day }}</span>
+                  <div v-if="day.visibleBooks?.length" class="reading-day__books">
+                    <span
+                      v-for="book in day.visibleBooks"
+                      :key="`${day.dateKey}-${book.id}`"
+                      class="reading-day__book"
+                      :data-status="book.status"
+                      :title="`${book.title} · ${book.startKey} ~ ${book.displayEnd}`"
+                    >
+                      {{ book.title }}
+                    </span>
+                    <span v-if="day.activeBooks.length > day.visibleBooks.length" class="reading-day__more">
+                      +{{ day.activeBooks.length - day.visibleBooks.length }}
+                    </span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </article>
+          <p v-else class="archive-list__empty reading-calendar__empty">읽는 중이거나 완독한 책이 아직 없습니다.</p>
+        </section>
       </section>
     </div>
 
@@ -1424,6 +1749,34 @@ watch(
               <span>저자</span>
               <input v-model="form.author" type="text" placeholder="선택 입력">
             </label>
+            <label class="field field--full">
+              <span>한줄 요약</span>
+              <input v-model="form.summary" type="text" maxlength="120" placeholder="저자 아래에 보여줄 짧은 요약">
+            </label>
+            <label class="field field--full">
+              <span>표지 이미지</span>
+              <div class="field__inline">
+                <input
+                  v-model="form.coverImage"
+                  type="text"
+                  inputmode="url"
+                  placeholder="이미지 주소 또는 이미지 자체를 붙여넣어주세요"
+                  @paste="handleCoverPaste"
+                >
+                <button type="button" class="ghost-button" :disabled="coverLookupPending" @click="lookupBookCover">
+                  {{ coverLookupPending ? '찾는 중...' : '표지 자동 가져오기' }}
+                </button>
+              </div>
+              <small class="field__hint">어떤 사이트 이미지든 주소를 붙여넣거나, 캡처한 이미지를 그대로 붙여넣으면 바로 반영됩니다.</small>
+              <small v-if="coverLookupError" class="field__error">{{ coverLookupError }}</small>
+            </label>
+            <div v-if="form.coverImage.trim()" class="book-cover-preview field--full" @paste="handleCoverPaste">
+              <img :src="form.coverImage.trim()" alt="책 표지 미리보기">
+              <div>
+                <strong>표지 미리보기</strong>
+                <p>새 이미지를 다시 붙여넣으면 즉시 교체되고, 저장 후 카드에도 같은 표지가 보입니다.</p>
+              </div>
+            </div>
             <label class="field">
               <span>상태</span>
               <select v-model="form.status">
@@ -1470,6 +1823,47 @@ watch(
             <p v-if="readingSyncError" class="entry-form__hint">Firebase 오류: {{ readingSyncError }}</p>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div v-if="reviewModalOpen" class="modal-backdrop" role="presentation" @click.self="closeReviewModal">
+      <section class="entry-panel modal-panel" role="dialog" aria-modal="true" aria-labelledby="review-modal-title">
+        <div class="entry-panel__head">
+          <div>
+            <p class="entry-panel__eyebrow">Reading Review</p>
+            <h2 id="review-modal-title">{{ selectedReviewBook?.title }} 독후감</h2>
+          </div>
+          <div class="entry-panel__actions">
+            <button type="button" class="ghost-button" @click="closeReviewModal">닫기</button>
+          </div>
+        </div>
+
+        <div v-if="selectedReviewBook" class="review-modal">
+          <div class="review-modal__book">
+            <button class="book-card__cover book-card__cover--large" type="button" :aria-label="`${selectedReviewBook.title} 표지`">
+              <img v-if="selectedReviewBook.coverImage" :src="selectedReviewBook.coverImage" :alt="`${selectedReviewBook.title} 표지`">
+              <span v-else>독후감</span>
+            </button>
+            <div>
+              <strong>{{ selectedReviewBook.title }}</strong>
+              <p>{{ selectedReviewBook.author || '저자 미입력' }}</p>
+              <small>{{ selectedReviewBook.startedAt }} ~ {{ selectedReviewBook.finishedAt || '읽는 중' }}</small>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>독후감</span>
+            <textarea
+              v-model="reviewDraft"
+              rows="10"
+              placeholder="이 책을 읽고 느낀 점을 자유롭게 남겨보세요"
+            />
+          </label>
+
+          <div class="entry-form__actions">
+            <button type="button" class="primary-button" @click="saveReview">독후감 저장</button>
+          </div>
+        </div>
       </section>
     </div>
 

@@ -1133,6 +1133,16 @@ body {
   gap: 0.45rem;
 }
 
+.field__inline {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.field__inline > *:first-child {
+  flex: 1 1 auto;
+}
+
 .field span {
   color: var(--text-soft);
   font-size: 0.88rem;
@@ -1184,6 +1194,44 @@ body {
   color: var(--expense);
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.field__hint {
+  margin: -0.15rem 0 0;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+}
+
+.book-cover-preview {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f7fcfa;
+}
+
+.book-cover-preview img {
+  width: 96px;
+  height: 136px;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(46, 87, 75, 0.08);
+}
+
+.book-cover-preview strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.book-cover-preview p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.5;
+  font-size: 0.88rem;
 }
 
 .entry-form__actions {
@@ -1327,6 +1375,210 @@ body {
   min-width: 0;
 }
 
+.reading-calendar {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(116, 182, 157, 0.14), transparent 36%),
+    linear-gradient(180deg, #fbfdfb 0%, #f4faf8 100%);
+  box-shadow: 0 16px 36px rgba(23, 56, 50, 0.08);
+}
+
+.reading-calendar__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.reading-calendar__eyebrow {
+  margin: 0 0 0.28rem;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reading-calendar__head h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.reading-calendar__description {
+  margin: 0.35rem 0 0;
+  color: var(--text-soft);
+  line-height: 1.5;
+  max-width: 52ch;
+}
+
+.reading-calendar__tools {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: end;
+}
+
+.reading-calendar__summary {
+  margin: 0;
+  padding: 0.55rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(20, 125, 111, 0.09);
+  color: var(--primary);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.reading-calendar__legend {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.reading-calendar__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.reading-calendar__legend i {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.reading-calendar__legend i[data-status="reading"] {
+  background: #5f96cc;
+}
+
+.reading-calendar__legend i[data-status="finished"] {
+  background: var(--primary);
+}
+
+.reading-month {
+  min-width: 0;
+  border: 1px solid rgba(46, 87, 75, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.8rem;
+}
+
+.reading-month__header {
+  margin-bottom: 0.65rem;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.reading-month__header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  text-align: center;
+}
+
+.reading-month__header .icon-button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.reading-month__weekdays,
+.reading-month__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.reading-month__weekdays {
+  margin-bottom: 0.35rem;
+}
+
+.reading-month__weekdays span {
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.reading-day {
+  min-height: 92px;
+  padding: 0.35rem;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(46, 87, 75, 0.08);
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+}
+
+.reading-day--blank {
+  background: transparent;
+  border-style: dashed;
+  border-color: transparent;
+}
+
+.reading-day--today {
+  border-color: rgba(20, 125, 111, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(20, 125, 111, 0.18);
+}
+
+.reading-day--active {
+  background: linear-gradient(180deg, #ffffff 0%, #f4fbf8 100%);
+}
+
+.reading-day__date {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #27423b;
+}
+
+.reading-day__books {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.reading-day__book,
+.reading-day__more {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.2rem 0.36rem;
+  border-radius: 8px;
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.reading-day__book[data-status="finished"] {
+  background: rgba(20, 125, 111, 0.12);
+  color: var(--primary);
+}
+
+.reading-day__book[data-status="reading"] {
+  background: rgba(95, 150, 204, 0.16);
+  color: #1f5f9f;
+}
+
+.reading-day__more {
+  background: rgba(48, 64, 60, 0.08);
+  color: #30403c;
+  text-align: center;
+}
+
+.reading-calendar__empty {
+  min-height: 160px;
+}
+
 .archive-list__empty {
   margin: 0;
   min-height: 220px;
@@ -1347,17 +1599,56 @@ body {
   box-shadow: 0 8px 20px rgba(23, 56, 50, 0.06);
 }
 
+.book-card__cover {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: 64px;
+  min-width: 64px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(46, 87, 75, 0.08);
+  background: #f6fbf9;
+  aspect-ratio: 2 / 3;
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.book-card__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .book-card__header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.6rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .book-card__main {
   display: grid;
   gap: 0.35rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.book-card__side {
+  display: grid;
+  justify-items: end;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+}
+
+.book-card__cover--large {
+  width: 96px;
+  min-width: 96px;
+  border-radius: 14px;
+  font-size: 0.8rem;
 }
 
 .book-card__eyebrow,
@@ -1421,6 +1712,14 @@ body {
   color: var(--text-soft);
 }
 
+.book-card__summary {
+  margin: 0.25rem 0 0;
+  color: #30403c;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .book-card__meta {
   margin: 0.95rem 0;
   padding: 0.72rem;
@@ -1458,6 +1757,35 @@ body {
   color: #30403c;
   line-height: 1.5;
   font-size: 0.93rem;
+}
+
+.review-modal {
+  display: grid;
+  gap: 1rem;
+}
+
+.review-modal__book {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: center;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f7fcfa;
+}
+
+.review-modal__book strong {
+  display: block;
+  margin-bottom: 0.22rem;
+}
+
+.review-modal__book p,
+.review-modal__book small {
+  display: block;
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.5;
 }
 
 .book-card__status-field {
@@ -1678,8 +2006,31 @@ body {
     gap: 0.75rem;
   }
 
+  .reading-calendar {
+    padding: 0.95rem;
+    border-radius: 18px;
+  }
+
+  .reading-calendar__tools {
+    justify-items: stretch;
+    width: 100%;
+  }
+
+  .reading-calendar__summary {
+    border-radius: 14px;
+  }
+
   .book-card {
     padding: 0.95rem;
+  }
+
+  .book-cover-preview {
+    grid-template-columns: 80px 1fr;
+  }
+
+  .book-cover-preview img {
+    width: 80px;
+    height: 116px;
   }
 
   .book-card__title {
@@ -1812,8 +2163,52 @@ body {
     padding-right: 2.25rem;
   }
 
+  .field__inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .book-card {
     border-radius: 14px;
+  }
+
+  .book-cover-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .book-cover-preview img {
+    width: 88px;
+    height: 124px;
+  }
+
+  .book-card__cover {
+    width: 56px;
+    min-width: 56px;
+  }
+
+  .book-card__cover--large {
+    width: 88px;
+    min-width: 88px;
+  }
+
+  .review-modal__book {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .reading-month {
+    padding: 0.7rem;
+    border-radius: 14px;
+  }
+
+  .reading-day {
+    min-height: 84px;
+    padding: 0.3rem;
+  }
+
+  .reading-day__book,
+  .reading-day__more {
+    font-size: 0.64rem;
+    padding: 0.18rem 0.32rem;
   }
 
   .book-card__status {

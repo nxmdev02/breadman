@@ -9,6 +9,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   edit: [id: number]
   delete: [id: number]
+  review: [id: number]
   statusChange: [payload: { id: number; status: BookEntry['status'] }]
 }>()
 
@@ -34,18 +35,25 @@ const ratingStars = computed(() => {
           </span>
           <p class="book-card__genre">{{ props.book.genre }}</p>
         </div>
+        <h3 class="book-card__title">{{ props.book.title }}</h3>
+        <p v-if="props.book.author" class="book-card__author">{{ props.book.author }}</p>
+        <p v-if="props.book.summary" class="book-card__summary">{{ props.book.summary }}</p>
       </div>
-      <div class="book-card__actions">
-        <button class="book-card__edit" type="button" aria-label="독서 기록 수정" @click="emit('edit', props.book.id)">
-          <Pencil class="action-icon" aria-hidden="true" />
+      <div class="book-card__side">
+        <button class="book-card__cover" type="button" :aria-label="`${props.book.title} 독후감 열기`" @click="emit('review', props.book.id)">
+          <img v-if="props.book.coverImage" :src="props.book.coverImage" :alt="`${props.book.title} 표지`">
+          <span v-else>독후감</span>
         </button>
-        <button class="book-card__delete" type="button" aria-label="독서 기록 삭제" @click="emit('delete', props.book.id)">
-          <Trash2 class="action-icon" aria-hidden="true" />
-        </button>
+        <div class="book-card__actions">
+          <button class="book-card__edit" type="button" aria-label="독서 기록 수정" @click="emit('edit', props.book.id)">
+            <Pencil class="action-icon" aria-hidden="true" />
+          </button>
+          <button class="book-card__delete" type="button" aria-label="독서 기록 삭제" @click="emit('delete', props.book.id)">
+            <Trash2 class="action-icon" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </header>
-    <h3 class="book-card__title">{{ props.book.title }}</h3>
-    <p v-if="props.book.author" class="book-card__author">{{ props.book.author }}</p>
 
     <dl class="book-card__meta">
       <div>
