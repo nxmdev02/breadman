@@ -54,7 +54,7 @@ body {
 
 .archive-header {
   display: grid;
-  grid-template-columns: minmax(190px, 0.9fr) minmax(240px, 1.2fr) auto;
+  grid-template-columns: minmax(190px, 1fr) minmax(220px, 320px) auto;
   grid-template-areas:
     "brand search auth";
   align-items: center;
@@ -89,15 +89,26 @@ body {
 .archive-brand__mark {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  height: 60px;
   flex: 0 0 auto;
-  border-radius: 12px;
+  border-radius: 16px;
   background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
   color: #fff;
   font-size: 1.2rem;
   font-weight: 800;
   box-shadow: 0 10px 18px rgba(20, 125, 111, 0.2);
+  overflow: hidden;
+}
+
+.archive-brand__mark img {
+  display: block;
+  width: 88%;
+  height: 88%;
+  object-fit: contain;
+  object-position: center;
+  margin: auto;
+  filter: drop-shadow(0 2px 3px rgba(75, 42, 12, 0.16));
 }
 
 .archive-brand[data-mode="reading"] .archive-brand__mark {
@@ -142,7 +153,9 @@ body {
   grid-area: search;
   position: relative;
   display: block;
+  width: min(100%, 320px);
   min-width: 0;
+  justify-self: end;
 }
 
 .archive-search::before {
@@ -370,7 +383,13 @@ body {
 }
 
 .metric-card {
-  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.45rem;
+  min-height: 118px;
+  padding: 0.9rem 1rem;
 }
 
 .metric-card p,
@@ -382,6 +401,7 @@ body {
   color: var(--text-soft);
   font-size: 0.86rem;
   font-weight: 700;
+  line-height: 1.3;
 }
 
 .metric-card__head {
@@ -389,18 +409,26 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.65rem;
+  height: 28px;
+  min-height: 28px;
 }
 
 .metric-card__head--inline {
   justify-content: flex-start;
-  gap: 0.28rem;
+  gap: 0.5rem;
+  margin-bottom: 0;
+}
+
+.metric-card__head--title {
+  justify-content: flex-start;
+  margin-bottom: 0;
 }
 
 .metric-card__action {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: 999px;
@@ -446,12 +474,11 @@ body {
 
 .metric-card__value-line {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.6rem;
-  margin-top: 0.45rem;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.5rem;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .metric-card__value-line--single {
@@ -460,6 +487,7 @@ body {
 
 .metric-card small {
   display: inline-flex;
+  align-items: center;
   padding: 0.28rem 0.48rem;
   border-radius: 999px;
   background: #f1f7f4;
@@ -505,10 +533,25 @@ body {
   display: grid;
   grid-template-columns: minmax(250px, 0.68fr) minmax(360px, 1.18fr) minmax(220px, 0.56fr);
   gap: 1rem;
+  align-items: stretch;
 }
 
 .budget-panel {
+  display: flex;
+  flex-direction: column;
   padding: 1rem;
+}
+
+.budget-panel__scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.budget-panel--chart .budget-panel__scroll {
+  overflow-y: auto;
+  padding: 0.7rem 0 0.55rem;
 }
 
 .budget-panel h2 {
@@ -516,17 +559,13 @@ body {
   font-size: 1.02rem;
 }
 
-.budget-panel--categories {
-  align-self: start;
-}
-
 .summary-table {
-  overflow-x: auto;
+  min-width: 780px;
 }
 
 .summary-table table {
-  width: 100%;
-  min-width: 780px;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.82rem;
 }
@@ -600,13 +639,12 @@ body {
   grid-template-columns: 92px minmax(0, 1fr) 92px;
   gap: 0.7rem;
   align-items: stretch;
+  min-width: 892px;
 }
 
 .combo-chart__scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   padding-bottom: 0.2rem;
-  -webkit-overflow-scrolling: touch;
 }
 
 .combo-chart__axis {
@@ -1026,6 +1064,16 @@ body {
   display: grid;
   gap: 1rem;
   min-width: 0;
+}
+
+.budget-list__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.budget-list__filter {
+  width: min(150px, 100%);
 }
 
 .entry-panel {
@@ -1456,10 +1504,11 @@ body {
 }
 
 .budget-card__category {
-  margin: 0 0 0.25rem;
+  margin: 0;
   color: var(--text-soft);
   font-size: 0.82rem;
   font-weight: 600;
+  line-height: 1;
 }
 
 .budget-card__title {
@@ -1478,6 +1527,7 @@ body {
   padding: 0.28rem 0.6rem;
   font-size: 0.76rem;
   font-weight: 700;
+  line-height: 1;
 }
 
 .budget-card__kind[data-kind="expense"] {
@@ -1595,6 +1645,14 @@ body {
     justify-content: stretch;
   }
 
+  .budget-list__toolbar {
+    justify-content: stretch;
+  }
+
+  .budget-list__filter {
+    width: 100%;
+  }
+
   .combo-chart__frame {
     grid-template-columns: 64px minmax(0, 1fr) 64px;
     gap: 0.45rem;
@@ -1655,7 +1713,8 @@ body {
   }
 
   .archive-search {
-    width: 100%;
+    width: min(100%, 320px);
+    justify-self: end;
   }
 
   .auth-bar {
@@ -1691,9 +1750,9 @@ body {
   }
 
   .archive-brand__mark {
-    width: 40px;
-    height: 40px;
-    border-radius: 11px;
+    width: 50px;
+    height: 50px;
+    border-radius: 14px;
   }
 
   .archive-brand strong {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw, Settings } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 import type { BookEntry, ReadingStatus } from '~/types/book'
 import type { BudgetEntry, BudgetKind } from '~/types/finance'
 import type { SyncPhase } from '~/types/firebase'
@@ -196,13 +196,6 @@ const previousMonthExpense = computed(() =>
 
 const previousMonthNet = computed(() => previousMonthIncome.value - previousMonthExpense.value)
 
-const monthDelta = (current: number, previous: number) => current - previous
-const deltaTrend = (current: number, previous: number) => {
-  const delta = monthDelta(current, previous)
-  if (delta === 0) return 'flat'
-  return delta > 0 ? 'up' : 'down'
-}
-
 const monthlyBudgetRows = computed(() => {
   let cumulative = startBalance.value
 
@@ -345,7 +338,7 @@ const budgetChartMax = computed(() => {
 })
 
 const budgetChartTooltip = (label: string, kind: 'income' | 'expense' | 'cumulative', amount: number) => {
-  const kindLabel = kind === 'income' ? '수입' : kind === 'expense' ? '지출' : '누적잔액'
+  const kindLabel = kind === 'income' ? '수입' : kind === 'expense' ? '지출' : '누적잔고'
   return `${label} ${kindLabel}: ${currency.format(amount)}원`
 }
 
@@ -374,16 +367,22 @@ const cumulativeChartBounds = computed(() => {
 })
 
 const comboChartInnerWidth = 708
+const comboChartColumnGap = 7.2
 const comboChartHeight = 280
 const comboChartInnerHeight = 232
 const comboChartBottom = 244
+const getComboChartMonthX = (index: number) => {
+  const monthCount = 12
+  const monthWidth = (comboChartInnerWidth - comboChartColumnGap * (monthCount - 1)) / monthCount
+  return monthWidth / 2 + index * (monthWidth + comboChartColumnGap)
+}
 
 const cumulativePolylinePoints = computed(() => {
   return monthlyBudgetRows.value
     .map((row, index) => {
-      const x = 36 + index * 56 + 28
+      const x = getComboChartMonthX(index)
       const y = comboChartBottom - ((row.cumulative - cumulativeChartBounds.value.min) / cumulativeChartBounds.value.range) * comboChartInnerHeight
-      return `${x},${Number(y.toFixed(2))}`
+      return `${Number(x.toFixed(2))},${Number(y.toFixed(2))}`
     })
     .join(' ')
 })
@@ -391,7 +390,7 @@ const cumulativePolylinePoints = computed(() => {
 const cumulativePointPositions = computed(() =>
   monthlyBudgetRows.value.map((row, index) => ({
     month: row.month,
-    x: 36 + index * 56 + 28,
+    x: getComboChartMonthX(index),
     y: comboChartBottom - ((row.cumulative - cumulativeChartBounds.value.min) / cumulativeChartBounds.value.range) * comboChartInnerHeight,
     value: row.cumulative
   }))
@@ -563,8 +562,32 @@ const filteredBudgetEntries = computed(() => {
     .sort((a, b) => b.spentAt.localeCompare(a.spentAt))
 })
 
+const readingEmptyMessage = computed(() => {
+  if (query.value.trim()) {
+    return '검색 결과와 일치하는 도서가 없습니다.'
+  }
+
+  if (selectedStatus.value !== 'all') {
+    return '선택한 상태에 해당하는 도서가 없습니다.'
+  }
+
+  return '도서 목록이 없습니다.'
+})
+
+const budgetEmptyMessage = computed(() => {
+  if (budgetQuery.value.trim()) {
+    return '검색 결과와 일치하는 가계부 내역이 없습니다.'
+  }
+
+  if (budgetKindFilter.value !== 'all') {
+    return '선택한 구분에 해당하는 가계부 내역이 없습니다.'
+  }
+
+  return '가계부 내역이 없습니다.'
+})
+
 useSeoMeta({
-  title: '아카이브 대시보드',
+  title: '아카이브 허브',
   description: '독서 기록과 가계부를 한 페이지에서 관리하는 개인 아카이브'
 })
 
@@ -573,6 +596,17 @@ useHead({
     {
       name: 'viewport',
       content: 'width=device-width, initial-scale=1, viewport-fit=cover'
+    }
+  ],
+  link: [
+    {
+      rel: 'icon',
+      type: 'image/png',
+      href: '/favicon.png'
+    },
+    {
+      rel: 'apple-touch-icon',
+      href: '/favicon.png'
     }
   ]
 })
@@ -993,7 +1027,9 @@ watch(
         :aria-label="activeTab === 'reading' ? '가계부로 전환' : '독서로 전환'"
         @click="toggleActiveTab"
       >
-        <span class="archive-brand__mark" aria-hidden="true">A</span>
+        <span class="archive-brand__mark" aria-hidden="true">
+          <img src="/brand-bread.png" alt="">
+        </span>
         <div>
           <strong>{{ user?.displayName ? `${user.displayName}의 Archive Hub` : 'Archive Hub' }}</strong>
           <span>{{ activeTab === 'reading' ? '독서 모드' : '가계부 모드' }}</span>
@@ -1083,14 +1119,6 @@ watch(
                 </option>
               </select>
             </label>
-            <label class="selector-card">
-              <span>구분</span>
-              <select v-model="budgetKindFilter" aria-label="가계부 구분 필터">
-                <option value="all">전체</option>
-                <option value="expense">지출</option>
-                <option value="income">수입</option>
-              </select>
-            </label>
           </div>
 
           <div class="archive-controls__actions budget-dashboard__actions">
@@ -1101,126 +1129,52 @@ watch(
           </div>
         </div>
 
-        <div class="budget-dashboard__metrics">
-          <article class="metric-card">
-            <div class="metric-card__head metric-card__head--inline">
-              <p>시작잔고</p>
-              <button
-                type="button"
-                class="metric-card__action"
-                aria-label="시작잔고 관리"
-                title="시작잔고 관리"
-                @click="openFinanceModal"
-              >
-                <Settings class="gear-icon" aria-hidden="true" />
-              </button>
-            </div>
-            <div class="metric-card__value-line metric-card__value-line--single">
-              <strong class="metric-card__amount">
-                <span class="metric-card__amount-value">{{ formatWonAmount(startBalance) }}</span>
-                <span class="metric-card__amount-unit">원</span>
-              </strong>
-            </div>
-          </article>
-          <article class="metric-card">
-            <p>{{ budgetReferenceMonth }}월 수입</p>
-            <div class="metric-card__value-line">
-              <strong class="metric-card__amount">
-                <span class="metric-card__amount-value">{{ formatWonAmount(monthIncome) }}</span>
-                <span class="metric-card__amount-unit">원</span>
-              </strong>
-              <small
-                class="metric-card__delta"
-                :data-trend="deltaTrend(monthIncome, previousMonthIncome)"
-              >
-                {{
-                  monthDelta(monthIncome, previousMonthIncome) === 0
-                    ? '-'
-                    : `${monthDelta(monthIncome, previousMonthIncome) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthIncome, previousMonthIncome)))}`
-                }}
-              </small>
-            </div>
-          </article>
-          <article class="metric-card">
-            <p>{{ budgetReferenceMonth }}월 지출</p>
-            <div class="metric-card__value-line">
-              <strong class="metric-card__amount">
-                <span class="metric-card__amount-value">{{ formatWonAmount(monthExpense) }}</span>
-                <span class="metric-card__amount-unit">원</span>
-              </strong>
-              <small
-                class="metric-card__delta"
-                :data-trend="deltaTrend(monthExpense, previousMonthExpense)"
-              >
-                {{
-                  monthDelta(monthExpense, previousMonthExpense) === 0
-                    ? '-'
-                    : `${monthDelta(monthExpense, previousMonthExpense) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthExpense, previousMonthExpense)))}`
-                }}
-              </small>
-            </div>
-          </article>
-          <article class="metric-card">
-            <p>{{ budgetReferenceMonth }}월 수입-지출</p>
-            <div class="metric-card__value-line">
-              <strong class="metric-card__amount">
-                <span class="metric-card__amount-value">{{ formatWonAmount(monthNet) }}</span>
-                <span class="metric-card__amount-unit">원</span>
-              </strong>
-              <small
-                class="metric-card__delta"
-                :data-trend="deltaTrend(monthNet, previousMonthNet)"
-              >
-                {{
-                  monthDelta(monthNet, previousMonthNet) === 0
-                    ? '-'
-                    : `${monthDelta(monthNet, previousMonthNet) > 0 ? '+' : '-'} ${currency.format(Math.abs(monthDelta(monthNet, previousMonthNet)))}`
-                }}
-              </small>
-            </div>
-          </article>
-          <article class="metric-card">
-            <p>{{ budgetReferenceMonth }}월 누적잔액</p>
-            <div class="metric-card__value-line">
-              <strong class="metric-card__amount">
-                <span class="metric-card__amount-value">{{ formatWonAmount(monthCumulativeBalance) }}</span>
-                <span class="metric-card__amount-unit">원</span>
-              </strong>
-            </div>
-          </article>
-        </div>
+        <BudgetMetricsGrid
+          :budget-reference-month="budgetReferenceMonth"
+          :start-balance="startBalance"
+          :month-income="monthIncome"
+          :previous-month-income="previousMonthIncome"
+          :month-expense="monthExpense"
+          :previous-month-expense="previousMonthExpense"
+          :month-net="monthNet"
+          :previous-month-net="previousMonthNet"
+          :month-cumulative-balance="monthCumulativeBalance"
+          @manage-start-balance="openFinanceModal"
+        />
       </div>
 
       <div class="budget-dashboard__middle">
         <section class="budget-panel budget-panel--table">
           <h2>{{ budgetReferenceYear }}년도 월별 수입/지출 현황</h2>
-          <div class="summary-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>구분</th>
-                  <th v-for="row in monthlyBudgetRows" :key="`head-${row.month}`">{{ row.month }}월</th>
-                  <th>합계</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <th>수입</th>
-                  <td v-for="row in monthlyBudgetRows" :key="`income-${row.month}`">{{ currency.format(row.income) }}</td>
-                  <td>{{ currency.format(monthlyBudgetRows.reduce((sum, row) => sum + row.income, 0)) }}</td>
-                </tr>
-                <tr>
-                  <th>지출</th>
-                  <td v-for="row in monthlyBudgetRows" :key="`expense-${row.month}`">{{ currency.format(row.expense) }}</td>
-                  <td>{{ currency.format(monthlyBudgetRows.reduce((sum, row) => sum + row.expense, 0)) }}</td>
-                </tr>
-                <tr>
-                  <th>누적 잔액</th>
-                  <td v-for="row in monthlyBudgetRows" :key="`balance-${row.month}`">{{ currency.format(row.cumulative) }}</td>
-                  <td>{{ currency.format(monthlyBudgetRows.at(-1)?.cumulative ?? 0) }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="budget-panel__scroll">
+            <div class="summary-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>구분</th>
+                    <th v-for="row in monthlyBudgetRows" :key="`head-${row.month}`">{{ row.month }}월</th>
+                    <th>합계</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th>수입</th>
+                    <td v-for="row in monthlyBudgetRows" :key="`income-${row.month}`">{{ currency.format(row.income) }}</td>
+                    <td>{{ currency.format(monthlyBudgetRows.reduce((sum, row) => sum + row.income, 0)) }}</td>
+                  </tr>
+                  <tr>
+                    <th>지출</th>
+                    <td v-for="row in monthlyBudgetRows" :key="`expense-${row.month}`">{{ currency.format(row.expense) }}</td>
+                    <td>{{ currency.format(monthlyBudgetRows.reduce((sum, row) => sum + row.expense, 0)) }}</td>
+                  </tr>
+                  <tr>
+                    <th>누적</th>
+                    <td v-for="row in monthlyBudgetRows" :key="`balance-${row.month}`">{{ currency.format(row.cumulative) }}</td>
+                    <td>{{ currency.format(monthlyBudgetRows.at(-1)?.cumulative ?? 0) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       </div>
@@ -1232,80 +1186,82 @@ watch(
             <div class="budget-chart__legend" aria-label="그래프 범례">
               <span><i data-kind="income" />수입</span>
               <span><i data-kind="expense" />지출</span>
-              <span><i data-kind="cumulative" />누적잔액</span>
+              <span><i data-kind="cumulative" />누적잔고</span>
             </div>
-            <div class="combo-chart__frame">
-              <div class="combo-chart__axis combo-chart__axis--left">
-                <span
-                  v-for="tick in comboLeftAxisTicks"
-                  :key="`left-${tick.label}`"
-                  :style="{ top: tick.top }"
-                >
-                  {{ tick.label }}
-                </span>
-              </div>
-              <div class="combo-chart__scroll">
-                <div class="combo-chart__plot" :style="{ minWidth: `${comboChartInnerWidth}px` }">
-                  <div class="combo-chart__gridlines" aria-hidden="true">
-                    <span v-for="row in 6" :key="`row-${row}`" />
-                  </div>
-                  <div class="combo-chart__bars">
-                    <article
-                      v-for="item in budgetChartData"
-                      :key="item.label"
-                      class="combo-chart__month"
-                    >
-                      <div class="combo-chart__columns">
-                        <div
-                          class="combo-chart__column combo-chart__column--income"
-                          :style="{ height: `${(item.income / budgetChartMax) * 100}%` }"
-                          :title="budgetChartTooltip(item.label, 'income', item.income)"
-                          aria-label="월별 수입"
-                        />
-                        <div
-                          class="combo-chart__column combo-chart__column--expense"
-                          :style="{ height: `${(item.expense / budgetChartMax) * 100}%` }"
-                          :title="budgetChartTooltip(item.label, 'expense', item.expense)"
-                          aria-label="월별 지출"
-                        />
-                      </div>
-                      <span class="combo-chart__month-label">{{ item.label }}</span>
-                    </article>
-                  </div>
-                  <svg
-                    class="combo-chart__line-layer"
-                    :viewBox="`0 0 ${comboChartInnerWidth} ${comboChartHeight}`"
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
+            <div class="budget-panel__scroll">
+              <div class="combo-chart__frame">
+                <div class="combo-chart__axis combo-chart__axis--left">
+                  <span
+                    v-for="tick in comboLeftAxisTicks"
+                    :key="`left-${tick.label}`"
+                    :style="{ top: tick.top }"
                   >
-                    <polyline
-                      class="combo-chart__line"
-                      :points="cumulativePolylinePoints"
-                    />
-                    <g
-                      v-for="point in cumulativePointPositions"
-                      :key="`point-${point.month}`"
-                      class="combo-chart__point-wrap"
-                    >
-                      <title>{{ budgetChartTooltip(`${point.month}월`, 'cumulative', point.value) }}</title>
-                      <circle
-                        class="combo-chart__point"
-                        :cx="point.x"
-                        :cy="point.y"
-                        r="4"
-                      />
-                    </g>
-                  </svg>
+                    {{ tick.label }}
+                  </span>
                 </div>
-              </div>
-              <div class="combo-chart__axis combo-chart__axis--right">
-                <span
-                  v-for="tick in comboRightAxisTicks"
-                  :key="`right-${tick.label}`"
-                  :style="{ top: tick.top }"
-                >
-                  {{ tick.label }}
-                </span>
+                <div class="combo-chart__scroll">
+                  <div class="combo-chart__plot" :style="{ minWidth: `${comboChartInnerWidth}px` }">
+                    <div class="combo-chart__gridlines" aria-hidden="true">
+                      <span v-for="row in 6" :key="`row-${row}`" />
+                    </div>
+                    <div class="combo-chart__bars">
+                      <article
+                        v-for="item in budgetChartData"
+                        :key="item.label"
+                        class="combo-chart__month"
+                      >
+                        <div class="combo-chart__columns">
+                          <div
+                            class="combo-chart__column combo-chart__column--income"
+                            :style="{ height: `${(item.income / budgetChartMax) * 100}%` }"
+                            :title="budgetChartTooltip(item.label, 'income', item.income)"
+                            aria-label="월별 수입"
+                          />
+                          <div
+                            class="combo-chart__column combo-chart__column--expense"
+                            :style="{ height: `${(item.expense / budgetChartMax) * 100}%` }"
+                            :title="budgetChartTooltip(item.label, 'expense', item.expense)"
+                            aria-label="월별 지출"
+                          />
+                        </div>
+                        <span class="combo-chart__month-label">{{ item.label }}</span>
+                      </article>
+                    </div>
+                    <svg
+                      class="combo-chart__line-layer"
+                      :viewBox="`0 0 ${comboChartInnerWidth} ${comboChartHeight}`"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <polyline
+                        class="combo-chart__line"
+                        :points="cumulativePolylinePoints"
+                      />
+                      <g
+                        v-for="point in cumulativePointPositions"
+                        :key="`point-${point.month}`"
+                        class="combo-chart__point-wrap"
+                      >
+                        <title>{{ budgetChartTooltip(`${point.month}월`, 'cumulative', point.value) }}</title>
+                        <circle
+                          class="combo-chart__point"
+                          :cx="point.x"
+                          :cy="point.y"
+                          r="4"
+                        />
+                      </g>
+                    </svg>
+                  </div>
+                </div>
+                <div class="combo-chart__axis combo-chart__axis--right">
+                  <span
+                    v-for="tick in comboRightAxisTicks"
+                    :key="`right-${tick.label}`"
+                    :style="{ top: tick.top }"
+                  >
+                    {{ tick.label }}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -1403,13 +1359,22 @@ watch(
             @delete="handleDeleteBook"
           />
         </div>
-        <p v-else class="archive-list__empty">도서 목록이 없습니다.</p>
+        <p v-else class="archive-list__empty">{{ readingEmptyMessage }}</p>
       </section>
     </div>
 
     <div v-else-if="user" class="archive-list">
       <section class="archive-list">
-        <div class="book-grid">
+        <div class="budget-list__toolbar">
+          <label class="field budget-list__filter">
+            <select v-model="budgetKindFilter" aria-label="가계부 구분 필터">
+              <option value="all">전체</option>
+              <option value="expense">지출</option>
+              <option value="income">수입</option>
+            </select>
+          </label>
+        </div>
+        <div v-if="filteredBudgetEntries.length" class="book-grid">
           <BudgetCard
             v-for="entry in filteredBudgetEntries"
             :key="entry.id"
@@ -1418,6 +1383,7 @@ watch(
             @delete="handleDeleteBudgetEntry"
           />
         </div>
+        <p v-else class="archive-list__empty">{{ budgetEmptyMessage }}</p>
       </section>
     </div>
 
