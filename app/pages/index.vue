@@ -1973,7 +1973,7 @@ watch(
         <div class="entry-panel__head">
           <div>
             <p class="entry-panel__eyebrow">Budget Editor</p>
-            <h2 id="budget-modal-title">{{ budgetEditingId ? '가계부 항목 수정' : '새 가계부 기록 추가' }}</h2>
+            <h2 id="budget-modal-title">{{ budgetEditingId ? '가계부 항목 수정' : '가계부 기록 추가' }}</h2>
           </div>
           <div class="entry-panel__actions">
             <button v-if="budgetEditingId" type="button" class="ghost-button" @click="resetBudgetForm">새로 입력</button>
@@ -1991,15 +1991,6 @@ watch(
               </select>
             </label>
             <label class="field">
-              <span>내역</span>
-              <select v-model="budgetForm.title">
-                <option v-for="title in budgetTitleOptions" :key="title" :value="title">
-                  {{ title }}
-                </option>
-              </select>
-              <small v-if="budgetErrors.title" class="field__error">{{ budgetErrors.title }}</small>
-            </label>
-            <label class="field">
               <span>카테고리</span>
               <select v-model="budgetForm.category">
                 <option v-for="category in budgetCategoryOptions" :key="category" :value="category">
@@ -2007,6 +1998,15 @@ watch(
                 </option>
               </select>
               <small v-if="budgetErrors.category" class="field__error">{{ budgetErrors.category }}</small>
+            </label>
+            <label class="field">
+              <span>내역</span>
+              <select v-model="budgetForm.title">
+                <option v-for="title in budgetTitleOptions" :key="title" :value="title">
+                  {{ title }}
+                </option>
+              </select>
+              <small v-if="budgetErrors.title" class="field__error">{{ budgetErrors.title }}</small>
             </label>
             <label class="field">
               <span>금액</span>
