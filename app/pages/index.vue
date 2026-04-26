@@ -92,9 +92,9 @@ const budgetErrors = reactive({
   amount: '',
   spentAt: ''
 })
-const expenseTitleOptions = ['식비', '카페', '교통비', '주거비', '쇼핑', '생활용품', '의료비', '문화생활', '통신비', '기타']
+const expenseTitleOptions = ['식비', '카페', '교통비', '주거비', '쇼핑', '생활용품', '의료비', '문화생활', '통신비', '구독료', '보험료', '주유비', '통행료', '차량 정비', '대출이자', '데이트비', '생일', '기념일', '생활비', '기타']
 const incomeTitleOptions = ['월급', '상여', '수당', '용돈', '환급', '이자', '부수입', '기타']
-const expenseCategoryOptions = ['생활비', '식비', '교통', '주거', '쇼핑', '건강', '문화', '고정지출', '기타']
+const expenseCategoryOptions = ['생활비', '식비', '간식', '교통', '차량', '주거', '쇼핑', '건강', '문화', '경조사', '고정지출', '기타']
 const incomeCategoryOptions = ['고정수입', '보너스', '금융수입', '부수입', '기타']
 const paymentMethodOptions = ['카드', '현금', '계좌이체', '간편결제', '자동이체', '기타']
 const budgetTitleOptions = computed(() =>
@@ -389,6 +389,82 @@ const budgetEntriesForMonth = computed(() =>
   budgetEntriesForYear.value.filter((entry) => Number(entry.spentAt.slice(5, 7)) === budgetReferenceMonth.value)
 )
 
+const archiveAccessStartDate = computed(() => '2026-04-01')
+
+const budgetCalendarSummary = computed(() => {
+  const incomeCount = budgetEntriesForMonth.value.filter((entry) => entry.kind === 'income').length
+  const expenseCount = budgetEntriesForMonth.value.filter((entry) => entry.kind === 'expense').length
+  return `수입 ${incomeCount}건 · 지출 ${expenseCount}건`
+})
+
+const budgetCalendarMonth = computed(() => {
+  const todayKey = getTodayDate()
+  const archiveStartKey = archiveAccessStartDate.value
+  const year = budgetReferenceYear.value
+  const month = budgetReferenceMonth.value
+  const firstDay = new Date(year, month - 1, 1)
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const leadingBlankCount = firstDay.getDay()
+  const trailingBlankCount = (7 - ((leadingBlankCount + daysInMonth) % 7 || 7)) % 7
+
+  const dayCells = Array.from({ length: daysInMonth }, (_, dayIndex) => {
+    const dateKey = createDateKey(year, month, dayIndex + 1)
+    const entries = budgetEntriesForMonth.value
+      .filter((entry) => entry.spentAt === dateKey)
+      .sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === 'income' ? -1 : 1
+        return b.amount - a.amount
+      })
+
+    const incomeTotal = entries
+      .filter((entry) => entry.kind === 'income')
+      .reduce((sum, entry) => sum + entry.amount, 0)
+    const expenseTotal = entries
+      .filter((entry) => entry.kind === 'expense')
+      .reduce((sum, entry) => sum + entry.amount, 0)
+    const visibleEntries = entries.slice(0, 2).map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      title: entry.title.trim() || entry.category.trim() || '기타',
+      amount: entry.amount
+    }))
+    const detailedEntries = entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      title: entry.title.trim() || entry.category.trim() || '기타',
+      memo: entry.memo?.trim() || '',
+      amount: entry.amount
+    }))
+    const tooltipText = detailedEntries
+      .map((entry) =>
+        `${entry.kind === 'income' ? '수입' : '지출'} · ${entry.title}${entry.memo ? ` · ${entry.memo}` : ''} · ${currency.format(entry.amount)}원`
+      )
+      .join('\n')
+
+    return {
+      dateKey,
+      day: dayIndex + 1,
+      detailedEntries,
+      entries,
+      expenseTotal,
+      incomeTotal,
+      isToday: dateKey === todayKey,
+      isNoExpenseDay: dateKey >= archiveStartKey && dateKey <= todayKey && expenseTotal === 0,
+      tooltipText,
+      visibleEntries
+    }
+  })
+
+  return {
+    days: [
+      ...Array.from({ length: leadingBlankCount }, (_, index) => ({ id: `budget-blank-start-${index}` })),
+      ...dayCells,
+      ...Array.from({ length: trailingBlankCount }, (_, index) => ({ id: `budget-blank-end-${index}` }))
+    ],
+    title: `${year}년 ${readingMonthLabels[month - 1]}`
+  }
+})
+
 const previousBudgetPoint = computed(() => {
   const previousMonth = budgetReferenceMonth.value === 1 ? 12 : budgetReferenceMonth.value - 1
   const previousYear = budgetReferenceMonth.value === 1 ? budgetReferenceYear.value - 1 : budgetReferenceYear.value
@@ -474,14 +550,14 @@ const topExpenseCategories = computed(() => {
     .sort((a, b) => b.amount - a.amount)
 })
 
-const topExpenseCategoriesLarge = computed(() => topExpenseCategories.value.slice(0, 5))
-const topExpenseCategoriesSmall = computed(() => [...topExpenseCategories.value].reverse().slice(0, 5))
+const topExpenseCategoriesLarge = computed(() => topExpenseCategories.value)
+const topExpenseCategoriesSmall = computed(() => [...topExpenseCategories.value].reverse())
 
 const incomeSources = computed(() => {
   const grouped = budgetEntriesForMonth.value
     .filter((entry) => entry.kind === 'income')
     .reduce<Record<string, number>>((acc, entry) => {
-      const key = entry.category.trim() || entry.title.trim() || '기타'
+      const key = entry.memo?.trim() || entry.title.trim() || entry.category.trim() || '기타'
       acc[key] = (acc[key] ?? 0) + entry.amount
       return acc
     }, {})
@@ -694,13 +770,38 @@ const incomeDonutStyle = computed(() => {
 })
 
 const expenseTreemap = computed(() => {
-  const total = topExpenseCategoriesLarge.value.reduce((sum, item) => sum + item.amount, 0) || 1
+  const maxAmount = topExpenseCategoriesLarge.value[0]?.amount || 1
 
-  return topExpenseCategoriesLarge.value.map((item) => ({
-    ...item,
-    width: `${Math.max(18, (item.amount / total) * 100)}%`,
-    color: '#cc4b1f'
-  }))
+  return topExpenseCategoriesLarge.value.map((item) => {
+    const entries = budgetEntriesForMonth.value
+      .filter((entry) => entry.kind === 'expense' && (entry.category.trim() || '기타') === item.category)
+      .sort((a, b) => b.amount - a.amount || b.spentAt.localeCompare(a.spentAt))
+
+    const details = entries.map((entry) => ({
+      id: entry.id,
+      title: entry.title.trim() || '기타',
+      memo: entry.memo?.trim() || '',
+      spentAt: entry.spentAt,
+      amount: entry.amount
+    }))
+
+    const tooltipLines = details.map((detail) =>
+      `${detail.title}${detail.memo ? ` · ${detail.memo}` : ''} · ${detail.spentAt} · ${currency.format(detail.amount)}원`
+    )
+
+    const ratio = item.amount / maxAmount
+    const basis = 22 + ratio * 30
+    const flexGrow = 1.4 + ratio * 5.6
+
+    return {
+      ...item,
+      basis: `${basis.toFixed(2)}%`,
+      flexGrow: Number(flexGrow.toFixed(2)),
+      color: '#cc4b1f',
+      details,
+      tooltipText: tooltipLines.join('\n')
+    }
+  })
 })
 
 const isWorkingState = (state: SyncPhase) =>
@@ -727,7 +828,7 @@ const openToast = (message: string, tone: 'success' | 'error' = 'success') => {
 
 const toggleActiveTab = () => {
   activeTab.value = activeTab.value === 'reading' ? 'budget' : 'reading'
-  openToast(activeTab.value === 'reading' ? '독서 모드로 전환되었습니다.' : '가계부 모드로 전환되었습니다.')
+  openToast(activeTab.value === 'reading' ? '독서 기록장으로 전환되었습니다.' : '가계부로 전환되었습니다.')
 }
 
 const resetAllData = () => {
@@ -783,7 +884,7 @@ const filteredBooks = computed(() => {
 const filteredBudgetEntries = computed(() => {
   const keyword = budgetQuery.value.trim().toLowerCase()
 
-  return budgetEntries.value
+  return budgetEntriesForMonth.value
     .filter((entry) =>
       budgetKindFilter.value === 'all' ? true : entry.kind === budgetKindFilter.value
     )
@@ -819,7 +920,7 @@ const budgetEmptyMessage = computed(() => {
     return '선택한 구분에 해당하는 가계부 내역이 없습니다.'
   }
 
-  return '가계부 내역이 없습니다.'
+  return '선택한 월의 가계부 내역이 없습니다.'
 })
 
 useSeoMeta({
@@ -1318,11 +1419,11 @@ watch(
         @click="toggleActiveTab"
       >
         <span class="archive-brand__mark" aria-hidden="true">
-          <img src="/brand-bread.png" alt="">
+          {{ activeTab === 'reading' ? '📚' : '💵' }}
         </span>
         <div>
           <strong>{{ user?.displayName ? `${user.displayName}의 Archive Hub` : 'Archive Hub' }}</strong>
-          <span>{{ activeTab === 'reading' ? '독서 모드' : '가계부 모드' }}</span>
+          <span>{{ activeTab === 'reading' ? '독서 기록장' : '가계부' }}</span>
         </div>
       </button>
 
@@ -1587,10 +1688,21 @@ watch(
               v-for="tile in expenseTreemap"
               :key="`tile-${tile.category}`"
               class="treemap__tile"
-              :style="{ width: tile.width, background: tile.color }"
+              :style="{ flex: `${tile.flexGrow} 1 ${tile.basis}`, background: tile.color }"
+              :title="tile.tooltipText || `${tile.category}: ${currency.format(tile.amount)}원`"
             >
               <span>{{ tile.category }}</span>
               <strong>{{ currency.format(tile.amount) }}</strong>
+                <div v-if="tile.details.length" class="treemap__tooltip">
+                  <p class="treemap__tooltip-title">{{ tile.category }} 세부내역</p>
+                  <ul class="treemap__tooltip-list">
+                    <li v-for="detail in tile.details" :key="detail.id">
+                      <span>{{ detail.memo || detail.title }}</span>
+                      <span>{{ detail.spentAt }}</span>
+                      <strong>{{ currency.format(detail.amount) }}원</strong>
+                    </li>
+                  </ul>
+              </div>
             </div>
           </div>
           <p v-else class="budget-panel__empty">항목이 없습니다.</p>
@@ -1617,6 +1729,87 @@ watch(
           <p v-else class="budget-panel__empty">항목이 없습니다.</p>
         </section>
       </div>
+
+      <section class="budget-calendar">
+        <div class="budget-calendar__head">
+          <div>
+            <p class="budget-calendar__eyebrow">Budget Calendar</p>
+            <h2>{{ budgetCalendarMonth.title }} 수입/지출 달력</h2>
+            <p class="budget-calendar__description">
+              날짜별 수입과 지출 흐름을 한눈에 보면서 아래 항목 카드와 함께 확인할 수 있습니다.
+            </p>
+          </div>
+          <p class="budget-calendar__summary">{{ budgetCalendarSummary }}</p>
+        </div>
+
+        <div class="budget-calendar__legend">
+          <span><i data-kind="income" />수입</span>
+          <span><i data-kind="expense" />지출</span>
+        </div>
+
+        <article class="budget-month">
+          <header class="budget-month__header">
+            <h3>{{ budgetCalendarMonth.title }}</h3>
+          </header>
+          <div class="budget-month__weekdays">
+            <span v-for="weekday in readingWeekdayLabels" :key="`budget-${weekday}`">{{ weekday }}</span>
+          </div>
+          <div class="budget-month__grid">
+            <div
+              v-for="day in budgetCalendarMonth.days"
+              :key="day.id ?? day.dateKey"
+              class="budget-day"
+              :class="{
+                'budget-day--blank': !day.dateKey,
+                'budget-day--today': day.isToday,
+                'budget-day--active': day.entries?.length
+              }"
+              :title="day.tooltipText || undefined"
+            >
+              <template v-if="day.dateKey">
+                <span class="budget-day__date">
+                  {{ day.day }}
+                  <em v-if="day.isNoExpenseDay" class="budget-day__marker" title="무지출">*</em>
+                </span>
+                <div v-if="day.incomeTotal || day.expenseTotal" class="budget-day__totals">
+                  <span v-if="day.incomeTotal" class="budget-day__total" data-kind="income">
+                    +{{ currency.format(day.incomeTotal) }}
+                  </span>
+                  <span v-if="day.expenseTotal" class="budget-day__total" data-kind="expense">
+                    -{{ currency.format(day.expenseTotal) }}
+                  </span>
+                </div>
+                <div v-if="day.visibleEntries?.length" class="budget-day__entries">
+                  <span
+                    v-for="entry in day.visibleEntries"
+                    :key="entry.id"
+                    class="budget-day__entry"
+                    :data-kind="entry.kind"
+                    :title="`${entry.title} · ${currency.format(entry.amount)}원`"
+                  >
+                    {{ entry.title }}
+                  </span>
+                  <span v-if="day.entries.length > day.visibleEntries.length" class="budget-day__more">
+                    +{{ day.entries.length - day.visibleEntries.length }}
+                  </span>
+                </div>
+                <div v-if="day.detailedEntries?.length" class="budget-day__tooltip">
+                  <p class="budget-day__tooltip-title">{{ day.day }}일 세부내역</p>
+                  <ul class="budget-day__tooltip-list">
+                    <li v-for="entry in day.detailedEntries" :key="`budget-day-detail-${entry.id}`">
+                      <span class="budget-day__tooltip-kind" :data-kind="entry.kind">
+                        {{ entry.kind === 'income' ? '수입' : '지출' }}
+                      </span>
+                      <span class="budget-day__tooltip-text">{{ entry.memo || entry.title }}</span>
+                      <strong>{{ currency.format(entry.amount) }}원</strong>
+                    </li>
+                  </ul>
+                </div>
+              </template>
+            </div>
+          </div>
+        </article>
+      </section>
     </section>
 
     <div v-if="user && activeTab === 'reading'" class="archive-list">
