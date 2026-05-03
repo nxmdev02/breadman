@@ -244,6 +244,14 @@ const fetchBookMetadata = async () => {
 const getTodayDate = () => new Date().toISOString().slice(0, 10)
 const readingWeekdayLabels = ['일', '월', '화', '수', '목', '금', '토']
 const readingMonthLabels = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월']
+const readingCalendarPalette = [
+  { bg: '#e7f6f1', fg: '#126b5f', border: '#7fc7b7' },
+  { bg: '#fff0e7', fg: '#b44d1d', border: '#f0a37d' },
+  { bg: '#edf3ff', fg: '#2f63b7', border: '#8eb0ef' },
+  { bg: '#fff8df', fg: '#9a6a00', border: '#f1d36f' },
+  { bg: '#f7ebff', fg: '#7f46a3', border: '#c79be4' },
+  { bg: '#eef1f4', fg: '#495765', border: '#a8b5c2' }
+]
 
 const parseDateParts = (value: string) => {
   const [year, month, day] = value.split('-').map(Number)
@@ -269,13 +277,15 @@ const shiftMonthKey = (monthKey: string, amount: number) => {
 const readingCalendarBooks = computed(() =>
   readingHistory.value
     .filter((book) => book.startedAt && (book.status === 'finished' || book.status === 'reading'))
-    .map((book) => {
+    .map((book, index) => {
       const rawEnd = book.status === 'reading' ? getTodayDate() : book.finishedAt || book.startedAt
       const startKey = book.startedAt <= rawEnd ? book.startedAt : rawEnd
       const endKey = book.startedAt <= rawEnd ? rawEnd : book.startedAt
+      const color = readingCalendarPalette[index % readingCalendarPalette.length]
 
       return {
         ...book,
+        color,
         endKey,
         startKey,
         displayEnd: rawEnd
@@ -326,12 +336,20 @@ const readingCalendarMonth = computed(() => {
         if (a.status !== b.status) return a.status === 'reading' ? -1 : 1
         return a.startKey.localeCompare(b.startKey)
       })
+    const tooltipBooks = activeBooks.map((book) => ({
+      color: book.color,
+      id: book.id,
+      period: `${book.startKey} ~ ${book.displayEnd}`,
+      status: book.status,
+      title: book.title
+    }))
 
     return {
       activeBooks,
       dateKey,
       day: dayIndex + 1,
       isToday: dateKey === todayKey,
+      tooltipBooks,
       visibleBooks: activeBooks.slice(0, 2)
     }
   })
@@ -897,6 +915,40 @@ const filteredBudgetEntries = computed(() => {
       )
     })
     .sort((a, b) => b.spentAt.localeCompare(a.spentAt))
+})
+
+const groupedBudgetEntries = computed(() => {
+  const groups = filteredBudgetEntries.value.reduce<
+    Array<{
+      spentAt: string
+      entries: typeof filteredBudgetEntries.value
+      expenseTotal: number
+      incomeTotal: number
+    }>
+  >((acc, entry) => {
+    const existingGroup = acc.find((group) => group.spentAt === entry.spentAt)
+
+    if (existingGroup) {
+      existingGroup.entries.push(entry)
+      if (entry.kind === 'expense') {
+        existingGroup.expenseTotal += entry.amount
+      } else {
+        existingGroup.incomeTotal += entry.amount
+      }
+      return acc
+    }
+
+    acc.push({
+      spentAt: entry.spentAt,
+      entries: [entry],
+      expenseTotal: entry.kind === 'expense' ? entry.amount : 0,
+      incomeTotal: entry.kind === 'income' ? entry.amount : 0
+    })
+
+    return acc
+  }, [])
+
+  return groups
 })
 
 const readingEmptyMessage = computed(() => {
@@ -1849,7 +1901,7 @@ watch(
           <div class="reading-calendar__head">
             <div>
               <p class="reading-calendar__eyebrow">Reading Calendar</p>
-              <h2>읽은 기간 캘린더</h2>
+              <h2>읽은 기간 캘린더 (26. 03. 21~)</h2>
               <p class="reading-calendar__description">
                 일반 달력처럼 한 달씩 넘기면서 시작일부터 완료일 또는 오늘까지의 독서 기간을 볼 수 있습니다.
               </p>
@@ -1899,20 +1951,52 @@ watch(
                 }"
               >
                 <template v-if="day.dateKey">
-                  <span class="reading-day__date">{{ day.day }}</span>
+                  <span class="reading-day__date">
+                    {{ day.day }}
+                    <em v-if="day.activeBooks?.length" class="reading-day__count">{{ day.activeBooks.length }}권</em>
+                  </span>
                   <div v-if="day.visibleBooks?.length" class="reading-day__books">
                     <span
                       v-for="book in day.visibleBooks"
                       :key="`${day.dateKey}-${book.id}`"
                       class="reading-day__book"
                       :data-status="book.status"
+                      :style="{
+                        backgroundColor: book.color.bg,
+                        borderColor: book.color.border,
+                        color: book.color.fg
+                      }"
                       :title="`${book.title} · ${book.startKey} ~ ${book.displayEnd}`"
                     >
+                      <i
+                        class="reading-day__book-dot"
+                        aria-hidden="true"
+                        :style="{ backgroundColor: book.color.fg }"
+                      />
                       {{ book.title }}
                     </span>
                     <span v-if="day.activeBooks.length > day.visibleBooks.length" class="reading-day__more">
-                      +{{ day.activeBooks.length - day.visibleBooks.length }}
+                      +{{ day.activeBooks.length - day.visibleBooks.length }}권
                     </span>
+                  </div>
+                  <div v-if="day.tooltipBooks?.length" class="reading-day__tooltip">
+                    <p class="reading-day__tooltip-title">{{ day.day }}일 독서 내역</p>
+                    <ul class="reading-day__tooltip-list">
+                      <li v-for="book in day.tooltipBooks" :key="`reading-day-${day.dateKey}-${book.id}`">
+                        <span
+                          class="reading-day__tooltip-chip"
+                          :style="{
+                            backgroundColor: book.color.bg,
+                            borderColor: book.color.border,
+                            color: book.color.fg
+                          }"
+                        >
+                          {{ book.status === 'reading' ? '읽는 중' : '완독' }}
+                        </span>
+                        <span class="reading-day__tooltip-text">{{ book.title }}</span>
+                        <small>{{ book.period }}</small>
+                      </li>
+                    </ul>
                   </div>
                 </template>
               </div>
@@ -1934,14 +2018,33 @@ watch(
             </select>
           </label>
         </div>
-        <div v-if="filteredBudgetEntries.length" class="book-grid">
-          <BudgetCard
-            v-for="entry in filteredBudgetEntries"
-            :key="entry.id"
-            :entry="entry"
-            @edit="startBudgetEditing"
-            @delete="handleDeleteBudgetEntry"
-          />
+        <div v-if="groupedBudgetEntries.length" class="budget-entry-groups">
+          <section
+            v-for="group in groupedBudgetEntries"
+            :key="`budget-group-${group.spentAt}`"
+            class="budget-entry-group"
+          >
+            <header class="budget-entry-group__head">
+              <div>
+                <p class="budget-entry-group__eyebrow">Entry Date</p>
+                <h3>{{ group.spentAt }}</h3>
+              </div>
+              <div class="budget-entry-group__totals">
+                <span v-if="group.incomeTotal" data-kind="income">+{{ currency.format(group.incomeTotal) }}원</span>
+                <span v-if="group.expenseTotal" data-kind="expense">-{{ currency.format(group.expenseTotal) }}원</span>
+              </div>
+            </header>
+
+            <div class="book-grid budget-entry-group__grid">
+              <BudgetCard
+                v-for="entry in group.entries"
+                :key="entry.id"
+                :entry="entry"
+                @edit="startBudgetEditing"
+                @delete="handleDeleteBudgetEntry"
+              />
+            </div>
+          </section>
         </div>
         <p v-else class="archive-list__empty">{{ budgetEmptyMessage }}</p>
       </section>

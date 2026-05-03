@@ -70,8 +70,6 @@ const ratingStars = computed(() => {
       </div>
     </dl>
 
-    <p v-if="props.book.memo" class="book-card__memo">{{ props.book.memo }}</p>
-
     <label class="book-card__status-field">
       <span>상태</span>
       <select
